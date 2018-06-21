@@ -141,6 +141,10 @@ public:
 
     bool WriteViewingKey(const libzcash::SproutViewingKey &vk);
     bool EraseViewingKey(const libzcash::SproutViewingKey &vk);
+    
+    /// Sapling
+    /// Write spending key to wallet database, where key is payment address and value is spending key.
+    bool WriteSaplingZKey(const libzcash::SaplingPaymentAddress& addr, const libzcash::SaplingSpendingKey& key, const CKeyMetadata &keyMeta);
 
 private:
     CWalletDB(const CWalletDB&);

@@ -142,6 +142,19 @@ bool CWalletDB::WriteZKey(const libzcash::SproutPaymentAddress& addr, const libz
     return Write(std::make_pair(std::string("zkey"), addr), key, false);
 }
 
+bool CWalletDB::WriteSaplingZKey(const libzcash::SaplingPaymentAddress& addr, const libzcash::SaplingSpendingKey& key, const CKeyMetadata &keyMeta)
+{
+    nWalletDBUpdated++;
+
+    if (!Write(std::make_pair(std::string("zkeymeta"), addr), keyMeta)) {
+        return false;
+    }
+
+    // pair is: tuple_key("zkey", paymentaddress) --> secretkey
+    return Write(std::make_pair(std::string("zkey"), addr), key, false);
+}
+
+
 bool CWalletDB::WriteViewingKey(const libzcash::SproutViewingKey &vk)
 {
     nWalletDBUpdated++;
