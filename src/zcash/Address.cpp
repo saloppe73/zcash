@@ -1,3 +1,4 @@
+
 #include "Address.hpp"
 #include "NoteEncryption.hpp"
 #include "hash.h"
@@ -75,8 +76,11 @@ boost::optional<SaplingPaymentAddress> SaplingIncomingViewingKey::address(divers
     }
 }
 
-boost::optional<SaplingPaymentAddress> SaplingSpendingKey::default_address() const {
-    return full_viewing_key().in_viewing_key().address(default_diversifier(*this));
+SaplingPaymentAddress SaplingSpendingKey::default_address() const {
+    // Iterates within default_diversifier to ensure a valid address is returned
+    auto addrOpt = full_viewing_key().in_viewing_key().address(default_diversifier(*this));
+    assert(addrOpt != boost::none);
+    return addrOpt.value();
 }
 
 }

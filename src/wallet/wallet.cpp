@@ -105,15 +105,9 @@ SaplingPaymentAddress CWallet::GenerateNewSaplingZKey()
 {
     AssertLockHeld(cs_wallet); // mapZKeyMetadata
     
-    SaplingSpendingKey sk;
-    boost::optional<SaplingPaymentAddress> addrOpt;
-    while (!addrOpt){
-        sk = SaplingSpendingKey::random();
-        addrOpt = sk.default_address();
-    }
-    
-    auto addr = addrOpt.value();
+    auto sk = SaplingSpendingKey::random();
     auto fvk = sk.full_viewing_key();
+    auto addr = sk.default_address();
     
     // Check for collision, even though it is unlikely to ever occur
     if (CCryptoKeyStore::HaveSaplingSpendingKey(fvk))
