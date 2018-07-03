@@ -141,13 +141,6 @@ bool CBasicKeyStore::RemoveViewingKey(const libzcash::SproutViewingKey &vk)
     return true;
 }
 
-bool CBasicKeyStore::RemoveSaplingFullViewingKey(const libzcash::SaplingFullViewingKey &fvk)
-{
-    LOCK(cs_SpendingKeyStore);
-    mapSaplingFullViewingKeys.erase(fvk.in_viewing_key());
-    return true;
-}
-
 bool CBasicKeyStore::HaveViewingKey(const libzcash::SproutPaymentAddress &address) const
 {
     LOCK(cs_SpendingKeyStore);
