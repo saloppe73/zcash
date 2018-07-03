@@ -1,4 +1,3 @@
-
 #include "Address.hpp"
 #include "NoteEncryption.hpp"
 #include "hash.h"

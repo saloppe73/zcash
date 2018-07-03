@@ -103,15 +103,16 @@ libzcash::PaymentAddress CWallet::GenerateNewZKey()
 // Generate a new Sapling spending key and return its public payment address
 SaplingPaymentAddress CWallet::GenerateNewSaplingZKey()
 {
-    AssertLockHeld(cs_wallet); // mapZKeyMetadata
+    AssertLockHeld(cs_wallet); // mapSaplingZKeyMetadata
     
     auto sk = SaplingSpendingKey::random();
     auto fvk = sk.full_viewing_key();
     auto addr = sk.default_address();
     
     // Check for collision, even though it is unlikely to ever occur
-    if (CCryptoKeyStore::HaveSaplingSpendingKey(fvk))
-    throw std::runtime_error("CWallet::GenerateNewSaplingZKey(): Collision detected");
+    if (CCryptoKeyStore::HaveSaplingSpendingKey(fvk)) {
+        throw std::runtime_error("CWallet::GenerateNewSaplingZKey(): Collision detected");
+    }
     
     // Create new metadata
     int64_t nCreationTime = GetTime();
