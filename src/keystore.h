@@ -65,7 +65,6 @@ public:
     
     //! Support for Sapling full viewing keys
     virtual bool AddSaplingFullViewingKey(const libzcash::SaplingFullViewingKey &fvk) =0;
-    virtual bool RemoveSaplingFullViewingKey(const libzcash::SaplingFullViewingKey &fvk) =0;
     virtual bool HaveSaplingFullViewingKey(const libzcash::SaplingIncomingViewingKey &ivk) const =0;
     virtual bool GetSaplingFullViewingKey(
         const libzcash::SaplingIncomingViewingKey &ivk, 
@@ -243,7 +242,6 @@ public:
     }
     
     virtual bool AddSaplingFullViewingKey(const libzcash::SaplingFullViewingKey &fvk);
-    virtual bool RemoveSaplingFullViewingKey(const libzcash::SaplingFullViewingKey &fvk);
     virtual bool HaveSaplingFullViewingKey(const libzcash::SaplingIncomingViewingKey &ivk) const;
     virtual bool GetSaplingFullViewingKey(
         const libzcash::SaplingIncomingViewingKey &ivk, 
@@ -263,5 +261,8 @@ public:
 typedef std::vector<unsigned char, secure_allocator<unsigned char> > CKeyingMaterial;
 typedef std::map<CKeyID, std::pair<CPubKey, std::vector<unsigned char> > > CryptedKeyMap;
 typedef std::map<libzcash::SproutPaymentAddress, std::vector<unsigned char> > CryptedSpendingKeyMap;
+
+//! Sapling 
+typedef std::map<libzcash::SaplingFullViewingKey, std::vector<unsigned char> > CryptedSaplingSpendingKeyMap;
 
 #endif // BITCOIN_KEYSTORE_H
