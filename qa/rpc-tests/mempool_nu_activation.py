@@ -1,11 +1,14 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # Copyright (c) 2018 The Zcash developers
 # Distributed under the MIT software license, see the accompanying
-# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+# file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, initialize_chain_clean, \
-    start_node, connect_nodes, wait_and_assert_operationid_status
+from test_framework.util import (
+    assert_equal, assert_true,
+    start_node, connect_nodes, wait_and_assert_operationid_status,
+    get_coinbase_address
+)
 
 from decimal import Decimal
 
@@ -14,10 +17,14 @@ class MempoolUpgradeActivationTest(BitcoinTestFramework):
 
     alert_filename = None  # Set by setup_network
 
+    def __init__(self):
+        super().__init__()
+        self.num_nodes = 2
+        self.setup_clean_chain = True
+
     def setup_network(self):
         args = ["-checkmempool", "-debug=mempool", "-blockmaxsize=4000",
-            "-nuparams=5ba81b19:200", # Overwinter
-            "-nuparams=76b809bb:210", # Sapling
+            "-nuparams=2bb40e60:200", # Blossom
         ]
         self.nodes = []
         self.nodes.append(start_node(0, self.options.tmpdir, args))
@@ -26,33 +33,30 @@ class MempoolUpgradeActivationTest(BitcoinTestFramework):
         self.is_network_split = False
         self.sync_all
 
-    def setup_chain(self):
-        print "Initializing test directory "+self.options.tmpdir
-        initialize_chain_clean(self.options.tmpdir, 2)
-
     def run_test(self):
         self.nodes[1].generate(100)
         self.sync_all()
 
         # Mine 97 blocks. After this, nodes[1] blocks
         # 1 to 97 are spend-able.
-        self.nodes[0].generate(97)
+        self.nodes[0].generate(94)
         self.sync_all()
 
         # Shield some ZEC
-        node1_taddr = self.nodes[1].getnewaddress()
-        node0_zaddr = self.nodes[0].z_getnewaddress()
+        node1_taddr = get_coinbase_address(self.nodes[1])
+        node0_zaddr = self.nodes[0].z_getnewaddress('sapling')
         recipients = [{'address': node0_zaddr, 'amount': Decimal('10')}]
-        myopid = self.nodes[1].z_sendmany(node1_taddr, recipients, 1, Decimal('0'))
-        print wait_and_assert_operationid_status(self.nodes[1], myopid)
+        myopid = self.nodes[1].z_sendmany(node1_taddr, recipients, 1, 0)
+        print(wait_and_assert_operationid_status(self.nodes[1], myopid))
+        self.sync_all()
+        self.nodes[0].generate(1)
         self.sync_all()
 
         # Mempool checks for activation of upgrade Y at height H on base X
         def nu_activation_checks():
-            # Mine block H - 2. After this, the mempool expects
-            # block H - 1, which is the last X block.
-            self.nodes[0].generate(1)
-            self.sync_all()
+            # Start at block H - 5. After this, the mempool expects block H - 4, which is
+            # the last height at which we can create transactions for X blocks (due to the
+            # expiring-soon restrictions).
 
             # Mempool should be empty.
             assert_equal(set(self.nodes[0].getrawmempool()), set())
@@ -60,31 +64,66 @@ class MempoolUpgradeActivationTest(BitcoinTestFramework):
             # Check node 0 shielded balance
             assert_equal(self.nodes[0].z_getbalance(node0_zaddr), Decimal('10'))
 
-            # Fill the mempool with twice as many transactions as can fit into blocks
+            # Fill the mempool with more transactions than can fit into 4 blocks
             node0_taddr = self.nodes[0].getnewaddress()
             x_txids = []
-            while self.nodes[1].getmempoolinfo()['bytes'] < 2 * 4000:
+            while self.nodes[1].getmempoolinfo()['bytes'] < 8 * 4000:
                 x_txids.append(self.nodes[1].sendtoaddress(node0_taddr, Decimal('0.001')))
             self.sync_all()
 
             # Spends should be in the mempool
             x_mempool = set(self.nodes[0].getrawmempool())
             assert_equal(x_mempool, set(x_txids))
+            assert_equal(set(self.nodes[1].getrawmempool()), set(x_txids))
+
+            blocks = []
+
+            # Mine block H - 4. After this, the mempool expects
+            # block H - 3, which is an X block.
+            self.nodes[0].generate(1)
+            self.sync_all()
+            blocks.append(self.nodes[0].getblock(self.nodes[0].getbestblockhash())['tx'])
+
+            # mempool should not be empty.
+            assert_true(len(set(self.nodes[0].getrawmempool())) > 0)
+            assert_true(len(set(self.nodes[1].getrawmempool())) > 0)
+
+            # Mine block H - 3. After this, the mempool expects
+            # block H - 2, which is an X block.
+            self.nodes[0].generate(1)
+            self.sync_all()
+            blocks.append(self.nodes[0].getblock(self.nodes[0].getbestblockhash())['tx'])
+
+            # mempool should not be empty.
+            assert_true(len(set(self.nodes[0].getrawmempool())) > 0)
+            assert_true(len(set(self.nodes[1].getrawmempool())) > 0)
+
+            # Mine block H - 2. After this, the mempool expects
+            # block H - 1, which is an X block.
+            self.nodes[0].generate(1)
+            self.sync_all()
+            blocks.append(self.nodes[0].getblock(self.nodes[0].getbestblockhash())['tx'])
+
+            # mempool should not be empty.
+            assert_true(len(set(self.nodes[0].getrawmempool())) > 0)
+            assert_true(len(set(self.nodes[1].getrawmempool())) > 0)
 
             # Mine block H - 1. After this, the mempool expects
             # block H, which is the first Y block.
             self.nodes[0].generate(1)
             self.sync_all()
+            blocks.append(self.nodes[0].getblock(self.nodes[0].getbestblockhash())['tx'])
 
             # mempool should be empty.
             assert_equal(set(self.nodes[0].getrawmempool()), set())
+            assert_equal(set(self.nodes[1].getrawmempool()), set())
 
-            # Block H - 1 should contain a subset of the original mempool
+            # Blocks [H - 4..H - 1] should contain a subset of the original mempool
             # (with all other transactions having been dropped)
-            block_txids = self.nodes[0].getblock(self.nodes[0].getbestblockhash())['tx']
-            assert(len(block_txids) < len(x_txids))
-            for txid in block_txids[1:]: # Exclude coinbase
-                assert(txid in x_txids)
+            assert(sum([len(block_txids) for block_txids in blocks]) < len(x_txids))
+            for block_txids in blocks:
+                for txid in block_txids[1:]: # Exclude coinbase
+                    assert(txid in x_txids)
 
             # Create some transparent Y transactions
             y_txids = [self.nodes[1].sendtoaddress(node0_taddr, Decimal('0.001')) for i in range(10)]
@@ -92,7 +131,7 @@ class MempoolUpgradeActivationTest(BitcoinTestFramework):
 
             # Create a shielded Y transaction
             recipients = [{'address': node0_zaddr, 'amount': Decimal('10')}]
-            myopid = self.nodes[0].z_sendmany(node0_zaddr, recipients, 1, Decimal('0'))
+            myopid = self.nodes[0].z_sendmany(node0_zaddr, recipients, 1,0)
             shielded = wait_and_assert_operationid_status(self.nodes[0], myopid)
             assert(shielded != None)
             y_txids.append(shielded)
@@ -100,6 +139,7 @@ class MempoolUpgradeActivationTest(BitcoinTestFramework):
 
             # Spends should be in the mempool
             assert_equal(set(self.nodes[0].getrawmempool()), set(y_txids))
+            assert_equal(set(self.nodes[1].getrawmempool()), set(y_txids))
 
             # Node 0 note should be unspendable
             assert_equal(self.nodes[0].z_getbalance(node0_zaddr), Decimal('0'))
@@ -118,6 +158,9 @@ class MempoolUpgradeActivationTest(BitcoinTestFramework):
             #assert_equal(set(self.nodes[0].getrawmempool()), set(block_txids[1:]))
             assert_equal(set(self.nodes[0].getrawmempool()), set())
 
+            # Node 1's mempool is unaffected because it still considers block H - 1 valid.
+            assert_equal(set(self.nodes[1].getrawmempool()), set(y_txids))
+
             # Node 0 note should be spendable again
             assert_equal(self.nodes[0].z_getbalance(node0_zaddr), Decimal('10'))
 
@@ -129,18 +172,10 @@ class MempoolUpgradeActivationTest(BitcoinTestFramework):
             self.nodes[1].generate(6)
             self.sync_all()
 
-        print('Testing Sprout -> Overwinter activation boundary')
-        # Current height = 197
+        print('Testing Sapling -> Blossom activation boundary')
+        # Current height = 195
         nu_activation_checks()
         # Current height = 205
-
-        self.nodes[0].generate(2)
-        self.sync_all()
-
-        print('Testing Overwinter -> Sapling activation boundary')
-        # Current height = 207
-        nu_activation_checks()
-        # Current height = 215
 
 if __name__ == '__main__':
     MempoolUpgradeActivationTest().main()

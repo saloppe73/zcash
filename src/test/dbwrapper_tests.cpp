@@ -1,7 +1,7 @@
 // Copyright (c) 2018 The Zcash developers
 // Copyright (c) 2012-2017 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "dbwrapper.h"
 #include "uint256.h"
@@ -14,7 +14,7 @@
                     
 using namespace std;
 using namespace boost::assign; // bring 'operator+=()' into scope
-using namespace boost::filesystem;
+using namespace fs;
          
 // Test if a string consists entirely of null characters
 bool is_null_key(const vector<unsigned char>& key) {

@@ -1,8 +1,7 @@
-### Gavin's notes on getting gitian builds up and running using KVM:###
+### Gavin's notes on getting gitian builds up and running using KVM
 
-These instructions distilled from:
-[  https://help.ubuntu.com/community/KVM/Installation](  https://help.ubuntu.com/community/KVM/Installation)
-... see there for complete details.
+These instructions distilled from
+[https://help.ubuntu.com/community/KVM/Installation](https://help.ubuntu.com/community/KVM/Installation).
 
 You need the right hardware: you need a 64-bit-capable CPU with hardware virtualization support (Intel VT-x or AMD-V). Not all modern CPUs support hardware virtualization.
 
@@ -33,14 +32,14 @@ Once you've got the right hardware and software:
     # Get inputs (see doc/release-process.md for exact inputs needed and where to get them)
     ...
 
-    # For further build instructions see doc/release-notes.md
+    # For further build instructions see doc/release-process.md
     ...
 
 ---------------------
 
 `gitian-builder` now also supports building using LXC. See
-[  https://help.ubuntu.com/12.04/serverguide/lxc.html](  https://help.ubuntu.com/12.04/serverguide/lxc.html)
-... for how to get LXC up and running under Ubuntu.
+[help.ubuntu.com](https://ubuntu.com/server/docs/containers-lxc)
+for how to get LXC up and running under Ubuntu.
 
 If your main machine is a 64-bit Mac or PC with a few gigabytes of memory
 and at least 10 gigabytes of free disk space, you can `gitian-build` using
@@ -51,7 +50,7 @@ Here's a description of Gavin's setup on OSX 10.6:
 1. Download and install VirtualBox from [https://www.virtualbox.org/](https://www.virtualbox.org/)
 
 2. Download the 64-bit Ubuntu Desktop 12.04 LTS .iso CD image from
-   [http://www.ubuntu.com/](http://www.ubuntu.com/)
+   [https://ubuntu.com/](https://ubuntu.com)
 
 3. Run VirtualBox and create a new virtual machine, using the Ubuntu .iso (see the [VirtualBox documentation](https://www.virtualbox.org/wiki/Documentation) for details). Create it with at least 2 gigabytes of memory and a disk that is at least 20 gigabytes big.
 

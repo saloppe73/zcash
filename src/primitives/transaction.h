@@ -1,7 +1,7 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #ifndef BITCOIN_PRIMITIVES_TRANSACTION_H
 #define BITCOIN_PRIMITIVES_TRANSACTION_H
@@ -15,13 +15,15 @@
 #include "consensus/consensus.h"
 
 #include <array>
+#include <variant>
 
-#include <boost/variant.hpp>
 
 #include "zcash/NoteEncryption.hpp"
 #include "zcash/Zcash.h"
 #include "zcash/JoinSplit.hpp"
 #include "zcash/Proof.hpp"
+
+#include <rust/ed25519/types.h>
 
 // Overwinter transaction version
 static const int32_t OVERWINTER_TX_VERSION = 3;
@@ -36,6 +38,14 @@ static_assert(SAPLING_TX_VERSION >= SAPLING_MIN_TX_VERSION,
     "Sapling tx version must not be lower than minimum");
 static_assert(SAPLING_TX_VERSION <= SAPLING_MAX_TX_VERSION,
     "Sapling tx version must not be higher than maximum");
+
+// These constants are defined in the protocol § 7.1:
+// https://zips.z.cash/protocol/protocol.pdf#txnencoding
+#define OUTPUTDESCRIPTION_SIZE 948
+#define SPENDDESCRIPTION_SIZE 384
+static inline size_t JOINSPLIT_SIZE(int transactionVersion) {
+    return transactionVersion >= SAPLING_TX_VERSION ? 1698 : 1802;
+}
 
 /**
  * A shielded input to a transaction. It contains data that describes a Spend transfer.
@@ -84,33 +94,17 @@ public:
     }
 };
 
-static constexpr size_t SAPLING_ENC_CIPHERTEXT_SIZE = (
-    1 +  // leading byte
-    11 + // d
-    8 +  // value
-    32 + // rcm
-    ZC_MEMO_SIZE + // memo
-    NOTEENCRYPTION_AUTH_BYTES);
-
-static constexpr size_t SAPLING_OUT_CIPHERTEXT_SIZE = (
-    32 + // pkd_new
-    32 + // esk
-    NOTEENCRYPTION_AUTH_BYTES);
-
 /**
  * A shielded output to a transaction. It contains data that describes an Output transfer.
  */
 class OutputDescription
 {
 public:
-    typedef std::array<unsigned char, SAPLING_ENC_CIPHERTEXT_SIZE> sapling_enc_ct_t; // TODO: Replace with actual type
-    typedef std::array<unsigned char, SAPLING_OUT_CIPHERTEXT_SIZE> sapling_out_ct_t; // TODO: Replace with actual type
-
     uint256 cv;                     //!< A value commitment to the value of the output note.
-    uint256 cm;                     //!< The note commitment for the output note.
+    uint256 cmu;                     //!< The u-coordinate of the note commitment for the output note.
     uint256 ephemeralKey;           //!< A Jubjub public key.
-    sapling_enc_ct_t encCiphertext; //!< A ciphertext component for the encrypted output note.
-    sapling_out_ct_t outCiphertext; //!< A ciphertext component for the encrypted output note.
+    libzcash::SaplingEncCiphertext encCiphertext; //!< A ciphertext component for the encrypted output note.
+    libzcash::SaplingOutCiphertext outCiphertext; //!< A ciphertext component for the encrypted output note.
     libzcash::GrothProof zkproof;   //!< A zero-knowledge proof using the output circuit.
 
     OutputDescription() { }
@@ -120,7 +114,7 @@ public:
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITE(cv);
-        READWRITE(cm);
+        READWRITE(cmu);
         READWRITE(ephemeralKey);
         READWRITE(encCiphertext);
         READWRITE(outCiphertext);
@@ -131,7 +125,7 @@ public:
     {
         return (
             a.cv == b.cv &&
-            a.cm == b.cm &&
+            a.cmu == b.cmu &&
             a.ephemeralKey == b.ephemeralKey &&
             a.encCiphertext == b.encCiphertext &&
             a.outCiphertext == b.outCiphertext &&
@@ -146,7 +140,7 @@ public:
 };
 
 template <typename Stream>
-class SproutProofSerializer : public boost::static_visitor<>
+class SproutProofSerializer
 {
     Stream& s;
     bool useGroth;
@@ -175,7 +169,7 @@ template<typename Stream, typename T>
 inline void SerReadWriteSproutProof(Stream& s, const T& proof, bool useGroth, CSerActionSerialize ser_action)
 {
     auto ps = SproutProofSerializer<Stream>(s, useGroth);
-    boost::apply_visitor(ps, proof);
+    std::visit(ps, proof);
 }
 
 template<typename Stream, typename T>
@@ -243,9 +237,7 @@ public:
     JSDescription(): vpub_old(0), vpub_new(0) { }
 
     JSDescription(
-            bool makeGrothProof,
-            ZCJoinSplit& params,
-            const uint256& joinSplitPubKey,
+            const Ed25519VerificationKey& joinSplitPubKey,
             const uint256& rt,
             const std::array<libzcash::JSInput, ZC_NUM_JS_INPUTS>& inputs,
             const std::array<libzcash::JSOutput, ZC_NUM_JS_OUTPUTS>& outputs,
@@ -256,9 +248,7 @@ public:
     );
 
     static JSDescription Randomized(
-            bool makeGrothProof,
-            ZCJoinSplit& params,
-            const uint256& joinSplitPubKey,
+            const Ed25519VerificationKey& joinSplitPubKey,
             const uint256& rt,
             std::array<libzcash::JSInput, ZC_NUM_JS_INPUTS>& inputs,
             std::array<libzcash::JSOutput, ZC_NUM_JS_OUTPUTS>& outputs,
@@ -271,15 +261,8 @@ public:
             std::function<int(int)> gen = GetRandInt
     );
 
-    // Verifies that the JoinSplit proof is correct.
-    bool Verify(
-        ZCJoinSplit& params,
-        libzcash::ProofVerifier& verifier,
-        const uint256& joinSplitPubKey
-    ) const;
-
     // Returns the calculated h_sig
-    uint256 h_sig(ZCJoinSplit& params, const uint256& joinSplitPubKey) const;
+    uint256 h_sig(const Ed25519VerificationKey& joinSplitPubKey) const;
 
     ADD_SERIALIZE_METHODS;
 
@@ -325,15 +308,14 @@ public:
     }
 };
 
-/** An outpoint - a combination of a transaction hash and an index n into its vout */
-class COutPoint
+class BaseOutPoint
 {
 public:
     uint256 hash;
     uint32_t n;
 
-    COutPoint() { SetNull(); }
-    COutPoint(uint256 hashIn, uint32_t nIn) { hash = hashIn; n = nIn; }
+    BaseOutPoint() { SetNull(); }
+    BaseOutPoint(uint256 hashIn, uint32_t nIn) { hash = hashIn; n = nIn; }
 
     ADD_SERIALIZE_METHODS;
 
@@ -346,21 +328,38 @@ public:
     void SetNull() { hash.SetNull(); n = (uint32_t) -1; }
     bool IsNull() const { return (hash.IsNull() && n == (uint32_t) -1); }
 
-    friend bool operator<(const COutPoint& a, const COutPoint& b)
+    friend bool operator<(const BaseOutPoint& a, const BaseOutPoint& b)
     {
         return (a.hash < b.hash || (a.hash == b.hash && a.n < b.n));
     }
 
-    friend bool operator==(const COutPoint& a, const COutPoint& b)
+    friend bool operator==(const BaseOutPoint& a, const BaseOutPoint& b)
     {
         return (a.hash == b.hash && a.n == b.n);
     }
 
-    friend bool operator!=(const COutPoint& a, const COutPoint& b)
+    friend bool operator!=(const BaseOutPoint& a, const BaseOutPoint& b)
     {
         return !(a == b);
     }
+};
 
+/** An outpoint - a combination of a transaction hash and an index n into its vout */
+class COutPoint : public BaseOutPoint
+{
+public:
+    COutPoint() : BaseOutPoint() {};
+    COutPoint(uint256 hashIn, uint32_t nIn) : BaseOutPoint(hashIn, nIn) {};
+    std::string ToString() const;
+};
+
+/** An outpoint - a combination of a transaction hash and an index n into its sapling
+ * output description (vShieldedOutput) */
+class SaplingOutPoint : public BaseOutPoint
+{
+public:
+    SaplingOutPoint() : BaseOutPoint() {};
+    SaplingOutPoint(uint256 hashIn, uint32_t nIn) : BaseOutPoint(hashIn, nIn) {};
     std::string ToString() const;
 };
 
@@ -373,6 +372,8 @@ class CTxIn
 public:
     COutPoint prevout;
     CScript scriptSig;
+    // The only use of nSequence (via IsFinal) is in TransactionSignatureChecker::CheckLockTime
+    // It disables the nLockTime feature when set to maxint.
     uint32_t nSequence;
 
     CTxIn()
@@ -457,8 +458,8 @@ public:
         // to spend something, then we consider it dust.
         // A typical spendable txout is 34 bytes big, and will
         // need a CTxIn of at least 148 bytes to spend:
-        // so dust is a spendable txout less than 54 satoshis
-        // with default minRelayTxFee.
+        // so dust is a spendable txout less than
+        // 54*minRelayTxFee/1000 (in satoshis)
         if (scriptPubKey.IsUnspendable())
             return 0;
 
@@ -555,9 +556,9 @@ public:
     const CAmount valueBalance;
     const std::vector<SpendDescription> vShieldedSpend;
     const std::vector<OutputDescription> vShieldedOutput;
-    const std::vector<JSDescription> vjoinsplit;
-    const uint256 joinSplitPubKey;
-    const joinsplit_sig_t joinSplitSig = {{0}};
+    const std::vector<JSDescription> vJoinSplit;
+    const Ed25519VerificationKey joinSplitPubKey;
+    const Ed25519Signature joinSplitSig;
     const binding_sig_t bindingSig = {{0}};
 
     /** Construct a CTransaction that qualifies as IsNull() */
@@ -612,10 +613,10 @@ public:
         }
         if (nVersion >= 2) {
             auto os = WithVersion(&s, static_cast<int>(header));
-            ::SerReadWrite(os, *const_cast<std::vector<JSDescription>*>(&vjoinsplit), ser_action);
-            if (vjoinsplit.size() > 0) {
-                READWRITE(*const_cast<uint256*>(&joinSplitPubKey));
-                READWRITE(*const_cast<joinsplit_sig_t*>(&joinSplitSig));
+            ::SerReadWrite(os, *const_cast<std::vector<JSDescription>*>(&vJoinSplit), ser_action);
+            if (vJoinSplit.size() > 0) {
+                READWRITE(*const_cast<Ed25519VerificationKey*>(&joinSplitPubKey));
+                READWRITE(*const_cast<Ed25519Signature*>(&joinSplitSig));
             }
         }
         if (isSaplingV4 && !(vShieldedSpend.empty() && vShieldedOutput.empty())) {
@@ -702,9 +703,9 @@ struct CMutableTransaction
     CAmount valueBalance;
     std::vector<SpendDescription> vShieldedSpend;
     std::vector<OutputDescription> vShieldedOutput;
-    std::vector<JSDescription> vjoinsplit;
-    uint256 joinSplitPubKey;
-    CTransaction::joinsplit_sig_t joinSplitSig = {{0}};
+    std::vector<JSDescription> vJoinSplit;
+    Ed25519VerificationKey joinSplitPubKey;
+    Ed25519Signature joinSplitSig;
     CTransaction::binding_sig_t bindingSig = {{0}};
 
     CMutableTransaction();
@@ -758,8 +759,8 @@ struct CMutableTransaction
         }
         if (nVersion >= 2) {
             auto os = WithVersion(&s, static_cast<int>(header));
-            ::SerReadWrite(os, vjoinsplit, ser_action);
-            if (vjoinsplit.size() > 0) {
+            ::SerReadWrite(os, vJoinSplit, ser_action);
+            if (vJoinSplit.size() > 0) {
                 READWRITE(joinSplitPubKey);
                 READWRITE(joinSplitSig);
             }

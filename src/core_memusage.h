@@ -1,6 +1,6 @@
 // Copyright (c) 2015 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #ifndef BITCOIN_CORE_MEMUSAGE_H
 #define BITCOIN_CORE_MEMUSAGE_H
@@ -33,6 +33,9 @@ static inline size_t RecursiveDynamicUsage(const CTransaction& tx) {
     for (std::vector<CTxOut>::const_iterator it = tx.vout.begin(); it != tx.vout.end(); it++) {
         mem += RecursiveDynamicUsage(*it);
     }
+    mem += memusage::DynamicUsage(tx.vJoinSplit);
+    mem += memusage::DynamicUsage(tx.vShieldedSpend);
+    mem += memusage::DynamicUsage(tx.vShieldedOutput);
     return mem;
 }
 
@@ -44,6 +47,9 @@ static inline size_t RecursiveDynamicUsage(const CMutableTransaction& tx) {
     for (std::vector<CTxOut>::const_iterator it = tx.vout.begin(); it != tx.vout.end(); it++) {
         mem += RecursiveDynamicUsage(*it);
     }
+    mem += memusage::DynamicUsage(tx.vJoinSplit);
+    mem += memusage::DynamicUsage(tx.vShieldedSpend);
+    mem += memusage::DynamicUsage(tx.vShieldedOutput);
     return mem;
 }
 

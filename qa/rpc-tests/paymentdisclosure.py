@@ -1,20 +1,22 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # Copyright (c) 2017 The Zcash developers
 # Distributed under the MIT software license, see the accompanying
-# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+# file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.authproxy import JSONRPCException
-from test_framework.util import assert_equal, initialize_chain_clean, \
-    start_node, connect_nodes_bi, wait_and_assert_operationid_status
+from test_framework.util import assert_equal, \
+    start_node, connect_nodes_bi, wait_and_assert_operationid_status, \
+    get_coinbase_address, DEFAULT_FEE
 
 from decimal import Decimal
 
 class PaymentDisclosureTest (BitcoinTestFramework):
 
-    def setup_chain(self):
-        print("Initializing test directory "+self.options.tmpdir)
-        initialize_chain_clean(self.options.tmpdir, 4)
+    def __init__(self):
+        super().__init__()
+        self.num_nodes = 3
+        self.setup_clean_chain = True
 
     def setup_network(self, split=False):
         args = ['-debug=zrpcunsafe,paymentdisclosure', '-experimentalfeatures', '-paymentdisclosure', '-txindex=1']
@@ -31,9 +33,10 @@ class PaymentDisclosureTest (BitcoinTestFramework):
         self.sync_all()
 
     def run_test (self):
-        print "Mining blocks..."
+        print("Mining blocks...")
 
         self.nodes[0].generate(4)
+        self.sync_all()
         walletinfo = self.nodes[0].getwalletinfo()
         assert_equal(walletinfo['immature_balance'], 40)
         assert_equal(walletinfo['balance'], 0)
@@ -46,8 +49,8 @@ class PaymentDisclosureTest (BitcoinTestFramework):
         assert_equal(self.nodes[1].getbalance(), 10)
         assert_equal(self.nodes[2].getbalance(), 30)
 
-        mytaddr = self.nodes[0].getnewaddress()
-        myzaddr = self.nodes[0].z_getnewaddress()
+        mytaddr = get_coinbase_address(self.nodes[0])
+        myzaddr = self.nodes[0].z_getnewaddress('sprout')
 
         # Check that Node 2 has payment disclosure disabled.
         try:
@@ -65,8 +68,8 @@ class PaymentDisclosureTest (BitcoinTestFramework):
             errorString = e.error['message']
             assert("No information available about transaction" in errorString)
 
-        # Shield coinbase utxos from node 0 of value 40, standard fee of 0.00010000
-        recipients = [{"address":myzaddr, "amount":Decimal('40.0')-Decimal('0.0001')}]
+        # Shield coinbase utxos from node 0 of value 40, default fee
+        recipients = [{"address": myzaddr, "amount": Decimal('40.0') - DEFAULT_FEE}]
         myopid = self.nodes[0].z_sendmany(mytaddr, recipients)
         txid = wait_and_assert_operationid_status(self.nodes[0], myopid)
 
@@ -161,10 +164,10 @@ class PaymentDisclosureTest (BitcoinTestFramework):
         pd = self.nodes[0].z_getpaymentdisclosure(txid, 0, 1)
         result = self.nodes[0].z_validatepaymentdisclosure(pd)
         output_value_sum += Decimal(result["value"])
-        assert_equal(output_value_sum, Decimal('39.99990000'))
+        assert_equal(output_value_sum, Decimal('40.0') - DEFAULT_FEE)
 
         # Create a z->z transaction, sending shielded funds from node 0 to node 1
-        node1zaddr = self.nodes[1].z_getnewaddress()
+        node1zaddr = self.nodes[1].z_getnewaddress('sprout')
         recipients = [{"address":node1zaddr, "amount":Decimal('1')}]
         myopid = self.nodes[0].z_sendmany(myzaddr, recipients)
         txid = wait_and_assert_operationid_status(self.nodes[0], myopid)

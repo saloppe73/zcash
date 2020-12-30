@@ -1,13 +1,13 @@
 // Copyright (c) 2018 The Zcash developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #ifndef ZCASH_CONSENSUS_UPGRADES_H
 #define ZCASH_CONSENSUS_UPGRADES_H
 
 #include "consensus/params.h"
 
-#include <boost/optional.hpp>
+#include <optional>
 
 enum UpgradeState {
     UPGRADE_DISABLED,
@@ -39,16 +39,6 @@ UpgradeState NetworkUpgradeState(
     Consensus::UpgradeIndex idx);
 
 /**
- * Returns true if the given network upgrade is active as of the given block
- * height. Caller must check that the height is >= 0 (and handle unknown
- * heights).
- */
-bool NetworkUpgradeActive(
-    int nHeight,
-    const Consensus::Params& params,
-    Consensus::UpgradeIndex idx);
-
-/**
  * Returns the index of the most recent upgrade as of the given block height
  * (corresponding to the current "epoch"). Consensus::BASE_SPROUT is the
  * default value if no upgrades are active. Caller must check that the height
@@ -62,6 +52,18 @@ int CurrentEpoch(int nHeight, const Consensus::Params& params);
  * Caller must check that the height is >= 0 (and handle unknown heights).
  */
 uint32_t CurrentEpochBranchId(int nHeight, const Consensus::Params& params);
+
+/**
+ * Returns the branch ID that preceded currentBranchId, or 0 if no upgrade
+ * matches currentBranchId.
+ */
+uint32_t PrevEpochBranchId(uint32_t currentBranchId, const Consensus::Params& params);
+
+/**
+ * Returns true if a given branch id is a valid nBranchId for one of the network
+ * upgrades contained in NetworkUpgradeInfo.
+ */
+bool IsConsensusBranchId(int branchId);
 
 /**
  * Returns true if the given block height is the activation height for the given
@@ -80,10 +82,16 @@ bool IsActivationHeightForAnyUpgrade(
     const Consensus::Params& params);
 
 /**
- * Returns the activation height for the next upgrade after the given block height,
- * or boost::none if there are no more known upgrades.
+ * Returns the index of the next upgrade after the given block height, or
+ * std::nullopt if there are no more known upgrades.
  */
-boost::optional<int> NextActivationHeight(
+std::optional<int> NextEpoch(int nHeight, const Consensus::Params& params);
+
+/**
+ * Returns the activation height for the next upgrade after the given block height,
+ * or std::nullopt if there are no more known upgrades.
+ */
+std::optional<int> NextActivationHeight(
     int nHeight,
     const Consensus::Params& params);
 

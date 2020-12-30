@@ -1,7 +1,7 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "interpreter.h"
 
@@ -13,6 +13,8 @@
 #include "pubkey.h"
 #include "script/script.h"
 #include "uint256.h"
+
+#include <librustzcash.h>
 
 using namespace std;
 
@@ -65,17 +67,17 @@ static inline void popstack(vector<valtype>& stack)
 }
 
 bool static IsCompressedOrUncompressedPubKey(const valtype &vchPubKey) {
-    if (vchPubKey.size() < 33) {
+    if (vchPubKey.size() < CPubKey::COMPRESSED_PUBLIC_KEY_SIZE) {
         //  Non-canonical public key: too short
         return false;
     }
     if (vchPubKey[0] == 0x04) {
-        if (vchPubKey.size() != 65) {
+        if (vchPubKey.size() != CPubKey::PUBLIC_KEY_SIZE) {
             //  Non-canonical public key: invalid length for uncompressed key
             return false;
         }
     } else if (vchPubKey[0] == 0x02 || vchPubKey[0] == 0x03) {
-        if (vchPubKey.size() != 33) {
+        if (vchPubKey.size() != CPubKey::COMPRESSED_PUBLIC_KEY_SIZE) {
             //  Non-canonical public key: invalid length for compressed key
             return false;
         }
@@ -965,12 +967,12 @@ namespace {
  */
 class CTransactionSignatureSerializer {
 private:
-    const CTransaction &txTo;  //! reference to the spending transaction (the one being serialized)
-    const CScript &scriptCode; //! output script being consumed
-    const unsigned int nIn;    //! input index of txTo being signed
-    const bool fAnyoneCanPay;  //! whether the hashtype has the SIGHASH_ANYONECANPAY flag set
-    const bool fHashSingle;    //! whether the hashtype is SIGHASH_SINGLE
-    const bool fHashNone;      //! whether the hashtype is SIGHASH_NONE
+    const CTransaction& txTo;  //!< reference to the spending transaction (the one being serialized)
+    const CScript& scriptCode; //!< output script being consumed
+    const unsigned int nIn;    //!< input index of txTo being signed
+    const bool fAnyoneCanPay;  //!< whether the hashtype has the SIGHASH_ANYONECANPAY flag set
+    const bool fHashSingle;    //!< whether the hashtype is SIGHASH_SINGLE
+    const bool fHashNone;      //!< whether the hashtype is SIGHASH_NONE
 
 public:
     CTransactionSignatureSerializer(const CTransaction &txToIn, const CScript &scriptCodeIn, unsigned int nInIn, int nHashTypeIn) :
@@ -1038,7 +1040,7 @@ public:
         // Serialize nLockTime
         ::Serialize(s, txTo.nLockTime);
 
-        // Serialize vjoinsplit
+        // Serialize vJoinSplit
         if (txTo.nVersion >= 2) {
             //
             // SIGHASH_* functions will hash portions of
@@ -1046,8 +1048,8 @@ public:
             // keeps the JoinSplit cryptographically bound
             // to the transaction.
             //
-            ::Serialize(s, txTo.vjoinsplit);
-            if (txTo.vjoinsplit.size() > 0) {
+            ::Serialize(s, txTo.vJoinSplit);
+            if (txTo.vJoinSplit.size() > 0) {
                 ::Serialize(s, txTo.joinSplitPubKey);
 
                 CTransaction::joinsplit_sig_t nullSig = {};
@@ -1057,17 +1059,17 @@ public:
     }
 };
 
-const unsigned char ZCASH_PREVOUTS_HASH_PERSONALIZATION[crypto_generichash_blake2b_PERSONALBYTES] =
+const unsigned char ZCASH_PREVOUTS_HASH_PERSONALIZATION[BLAKE2bPersonalBytes] =
     {'Z','c','a','s','h','P','r','e','v','o','u','t','H','a','s','h'};
-const unsigned char ZCASH_SEQUENCE_HASH_PERSONALIZATION[crypto_generichash_blake2b_PERSONALBYTES] =
+const unsigned char ZCASH_SEQUENCE_HASH_PERSONALIZATION[BLAKE2bPersonalBytes] =
     {'Z','c','a','s','h','S','e','q','u','e','n','c','H','a','s','h'};
-const unsigned char ZCASH_OUTPUTS_HASH_PERSONALIZATION[crypto_generichash_blake2b_PERSONALBYTES] =
+const unsigned char ZCASH_OUTPUTS_HASH_PERSONALIZATION[BLAKE2bPersonalBytes] =
     {'Z','c','a','s','h','O','u','t','p','u','t','s','H','a','s','h'};
-const unsigned char ZCASH_JOINSPLITS_HASH_PERSONALIZATION[crypto_generichash_blake2b_PERSONALBYTES] =
+const unsigned char ZCASH_JOINSPLITS_HASH_PERSONALIZATION[BLAKE2bPersonalBytes] =
     {'Z','c','a','s','h','J','S','p','l','i','t','s','H','a','s','h'};
-const unsigned char ZCASH_SHIELDED_SPENDS_HASH_PERSONALIZATION[crypto_generichash_blake2b_PERSONALBYTES] =
+const unsigned char ZCASH_SHIELDED_SPENDS_HASH_PERSONALIZATION[BLAKE2bPersonalBytes] =
     {'Z','c','a','s','h','S','S','p','e','n','d','s','H','a','s','h'};
-const unsigned char ZCASH_SHIELDED_OUTPUTS_HASH_PERSONALIZATION[crypto_generichash_blake2b_PERSONALBYTES] =
+const unsigned char ZCASH_SHIELDED_OUTPUTS_HASH_PERSONALIZATION[BLAKE2bPersonalBytes] =
     {'Z','c','a','s','h','S','O','u','t','p','u','t','H','a','s','h'};
 
 uint256 GetPrevoutHash(const CTransaction& txTo) {
@@ -1096,8 +1098,8 @@ uint256 GetOutputsHash(const CTransaction& txTo) {
 
 uint256 GetJoinSplitsHash(const CTransaction& txTo) {
     CBLAKE2bWriter ss(SER_GETHASH, static_cast<int>(txTo.GetHeader()), ZCASH_JOINSPLITS_HASH_PERSONALIZATION);
-    for (unsigned int n = 0; n < txTo.vjoinsplit.size(); n++) {
-        ss << txTo.vjoinsplit[n];
+    for (unsigned int n = 0; n < txTo.vJoinSplit.size(); n++) {
+        ss << txTo.vJoinSplit[n];
     }
     ss << txTo.joinSplitPubKey;
     return ss.GetHash();
@@ -1188,7 +1190,7 @@ uint256 SignatureHash(
             hashOutputs = ss.GetHash();
         }
 
-        if (!txTo.vjoinsplit.empty()) {
+        if (!txTo.vJoinSplit.empty()) {
             hashJoinSplits = cache ? cache->hashJoinSplits : GetJoinSplitsHash(txTo);
         }
 

@@ -1,18 +1,19 @@
 // Copyright (c) 2012-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "dbwrapper.h"
 
+#include "fs.h"
 #include "util.h"
-
-#include <boost/filesystem.hpp>
 
 #include <leveldb/cache.h>
 #include <leveldb/env.h>
 #include <leveldb/filter_policy.h>
 #include <memenv.h>
 #include <stdint.h>
+
+#include <boost/scoped_ptr.hpp>
 
 static leveldb::Options GetOptions(size_t nCacheSize)
 {
@@ -30,7 +31,7 @@ static leveldb::Options GetOptions(size_t nCacheSize)
     return options;
 }
 
-CDBWrapper::CDBWrapper(const boost::filesystem::path& path, size_t nCacheSize, bool fMemory, bool fWipe)
+CDBWrapper::CDBWrapper(const fs::path& path, size_t nCacheSize, bool fMemory, bool fWipe)
 {
     penv = NULL;
     readoptions.verify_checksums = true;

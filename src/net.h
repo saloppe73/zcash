@@ -1,13 +1,14 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #ifndef BITCOIN_NET_H
 #define BITCOIN_NET_H
 
 #include "bloom.h"
 #include "compat.h"
+#include "fs.h"
 #include "hash.h"
 #include "limitedmap.h"
 #include "mruset.h"
@@ -18,6 +19,7 @@
 #include "sync.h"
 #include "uint256.h"
 #include "utilstrencodings.h"
+#include "chainparams.h"
 
 #include <deque>
 #include <stdint.h>
@@ -26,9 +28,9 @@
 #include <arpa/inet.h>
 #endif
 
-#include <boost/filesystem/path.hpp>
-#include <boost/foreach.hpp>
 #include <boost/signals2/signal.hpp>
+
+#include <tracing.h>
 
 class CAddrMan;
 class CBlockIndex;
@@ -59,8 +61,18 @@ static const size_t MAPASKFOR_MAX_SZ = MAX_INV_SZ;
 static const size_t SETASKFOR_MAX_SZ = 2 * MAX_INV_SZ;
 /** The maximum number of peer connections to maintain. */
 static const unsigned int DEFAULT_MAX_PEER_CONNECTIONS = 125;
-/** The period before a network upgrade activates, where connections to upgrading peers are preferred (in blocks). */
-static const int NETWORK_UPGRADE_PEER_PREFERENCE_BLOCK_PERIOD = 24 * 24 * 3;
+/**
+ * The period before a network upgrade activates, where connections to upgrading peers are preferred (in blocks).
+ * This was three days for upgrades up to and including Blossom, and is 1.5 days from Heartwood onward.
+ */
+static const int NETWORK_UPGRADE_PEER_PREFERENCE_BLOCK_PERIOD = 1728;
+
+static const bool DEFAULT_FORCEDNSSEED = false;
+static const size_t DEFAULT_MAXRECEIVEBUFFER = 5 * 1000;
+static const size_t DEFAULT_MAXSENDBUFFER    = 1 * 1000;
+
+// NOTE: When adjusting this, update rpcnet:setban's help ("24h")
+static const unsigned int DEFAULT_MISBEHAVING_BANTIME = 60 * 60 * 24;  // Default 24-hour ban
 
 unsigned int ReceiveFloodSize();
 unsigned int SendBufferSize();
@@ -100,8 +112,8 @@ struct CombinerAll
 struct CNodeSignals
 {
     boost::signals2::signal<int ()> GetHeight;
-    boost::signals2::signal<bool (CNode*), CombinerAll> ProcessMessages;
-    boost::signals2::signal<bool (CNode*, bool), CombinerAll> SendMessages;
+    boost::signals2::signal<bool (const CChainParams&, CNode*), CombinerAll> ProcessMessages;
+    boost::signals2::signal<bool (const Consensus::Params&, CNode*, bool), CombinerAll> SendMessages;
     boost::signals2::signal<void (NodeId, const CNode*)> InitializeNode;
     boost::signals2::signal<void (NodeId)> FinalizeNode;
 };
@@ -287,6 +299,10 @@ public:
     CBloomFilter* pfilter;
     int nRefCount;
     NodeId id;
+    // Stored so we can pass a pointer to it across the Rust FFI for span.
+    std::string idStr;
+
+    tracing::Span span;
 protected:
 
     // Denial-of-service detection/prevention
@@ -346,6 +362,10 @@ private:
 
 public:
 
+    // Regenerate the span for this CNode. This re-queries the log filter to see
+    // if the span should be enabled, and re-collects the logged variables.
+    void ReloadTracingSpan();
+
     NodeId GetId() const {
       return id;
     }
@@ -360,7 +380,7 @@ public:
     unsigned int GetTotalRecvSize()
     {
         unsigned int total = 0;
-        BOOST_FOREACH(const CNetMessage &msg, vRecvMsg)
+        for (const CNetMessage &msg : vRecvMsg)
             total += msg.vRecv.size() + 24;
         return total;
     }
@@ -372,7 +392,7 @@ public:
     void SetRecvVersion(int nVersionIn)
     {
         nRecvVersion = nVersionIn;
-        BOOST_FOREACH(CNetMessage &msg, vRecvMsg)
+        for (CNetMessage &msg : vRecvMsg)
             msg.SetVersion(nVersionIn);
     }
 
@@ -394,14 +414,14 @@ public:
         addrKnown.insert(addr.GetKey());
     }
 
-    void PushAddress(const CAddress& addr)
+    void PushAddress(const CAddress& addr, FastRandomContext &insecure_rand)
     {
         // Known checking here is only to save space from duplicates.
         // SendMessages will filter it again for knowns that were added
         // after addresses were pushed.
         if (addr.IsValid() && !addrKnown.contains(addr.GetKey())) {
             if (vAddrToSend.size() >= MAX_ADDR_TO_SEND) {
-                vAddrToSend[insecure_rand() % vAddrToSend.size()] = addr;
+                vAddrToSend[insecure_rand.rand32() % vAddrToSend.size()] = addr;
             } else {
                 vAddrToSend.push_back(addr);
             }
@@ -646,7 +666,7 @@ void RelayTransaction(const CTransaction& tx, const CDataStream& ss);
 class CAddrDB
 {
 private:
-    boost::filesystem::path pathAddr;
+    fs::path pathAddr;
 public:
     CAddrDB();
     bool Write(const CAddrMan& addr);

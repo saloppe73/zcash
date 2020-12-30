@@ -1,10 +1,10 @@
 // Copyright (c) 2016 The Zcash developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 
-#ifndef ASYNCRPCOPERATION_H
-#define ASYNCRPCOPERATION_H
+#ifndef ZCASH_ASYNCRPCOPERATION_H
+#define ZCASH_ASYNCRPCOPERATION_H
 
 #include <string>
 #include <atomic>
@@ -149,5 +149,5 @@ private:
     int64_t creation_time_;
 };
 
-#endif /* ASYNCRPCOPERATION_H */
+#endif // ZCASH_ASYNCRPCOPERATION_H
 

@@ -1,6 +1,6 @@
 // Copyright (c) 2018 The Zcash developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "consensus/upgrades.h"
 
@@ -22,12 +22,27 @@ const struct NUInfo NetworkUpgradeInfo[Consensus::MAX_NETWORK_UPGRADES] = {
     {
         /*.nBranchId =*/ 0x5ba81b19,
         /*.strName =*/ "Overwinter",
-        /*.strInfo =*/ "See https://z.cash/upgrade/overwinter.html for details.",
+        /*.strInfo =*/ "See https://z.cash/upgrade/overwinter/ for details.",
     },
     {
         /*.nBranchId =*/ 0x76b809bb,
         /*.strName =*/ "Sapling",
-        /*.strInfo =*/ "See https://z.cash/upgrade/sapling.html for details.",
+        /*.strInfo =*/ "See https://z.cash/upgrade/sapling/ for details.",
+    },
+    {
+        /*.nBranchId =*/ 0x2bb40e60,
+        /*.strName =*/ "Blossom",
+        /*.strInfo =*/ "See https://z.cash/upgrade/blossom/ for details.",
+    },
+    {
+        /*.nBranchId =*/ 0xf5b9230b,
+        /*.strName =*/ "Heartwood",
+        /*.strInfo =*/ "See https://z.cash/upgrade/heartwood/ for details.",
+    },
+    {
+        /*.nBranchId =*/ 0xe9ff75a6,
+        /*.strName =*/ "Canopy",
+        /*.strInfo =*/ "See https://z.cash/upgrade/canopy/ for details.",
     }
 };
 
@@ -60,17 +75,9 @@ UpgradeState NetworkUpgradeState(
     }
 }
 
-bool NetworkUpgradeActive(
-    int nHeight,
-    const Consensus::Params& params,
-    Consensus::UpgradeIndex idx)
-{
-    return NetworkUpgradeState(nHeight, params, idx) == UPGRADE_ACTIVE;
-}
-
 int CurrentEpoch(int nHeight, const Consensus::Params& params) {
     for (auto idxInt = Consensus::MAX_NETWORK_UPGRADES - 1; idxInt >= Consensus::BASE_SPROUT; idxInt--) {
-        if (NetworkUpgradeActive(nHeight, params, Consensus::UpgradeIndex(idxInt))) {
+        if (params.NetworkUpgradeActive(nHeight, Consensus::UpgradeIndex(idxInt))) {
             return idxInt;
         }
     }
@@ -80,6 +87,25 @@ int CurrentEpoch(int nHeight, const Consensus::Params& params) {
 
 uint32_t CurrentEpochBranchId(int nHeight, const Consensus::Params& params) {
     return NetworkUpgradeInfo[CurrentEpoch(nHeight, params)].nBranchId;
+}
+
+uint32_t PrevEpochBranchId(uint32_t currentBranchId, const Consensus::Params& params) {
+    for (int idx = Consensus::BASE_SPROUT + 1; idx < Consensus::MAX_NETWORK_UPGRADES; idx++) {
+        if (currentBranchId == NetworkUpgradeInfo[idx].nBranchId) {
+            return NetworkUpgradeInfo[idx - 1].nBranchId;
+        }
+    }
+    // Base case
+    return NetworkUpgradeInfo[Consensus::BASE_SPROUT].nBranchId;
+}
+
+bool IsConsensusBranchId(int branchId) {
+    for (int idx = Consensus::BASE_SPROUT; idx < Consensus::MAX_NETWORK_UPGRADES; idx++) {
+        if (branchId == NetworkUpgradeInfo[idx].nBranchId) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool IsActivationHeight(
@@ -114,20 +140,28 @@ bool IsActivationHeightForAnyUpgrade(
     return false;
 }
 
-boost::optional<int> NextActivationHeight(
-    int nHeight,
-    const Consensus::Params& params)
-{
+std::optional<int> NextEpoch(int nHeight, const Consensus::Params& params) {
     if (nHeight < 0) {
-        return boost::none;
+        return std::nullopt;
     }
 
-    // Don't count Sprout as an activation height
+    // Sprout is never pending
     for (auto idx = Consensus::BASE_SPROUT + 1; idx < Consensus::MAX_NETWORK_UPGRADES; idx++) {
         if (NetworkUpgradeState(nHeight, params, Consensus::UpgradeIndex(idx)) == UPGRADE_PENDING) {
-            return params.vUpgrades[idx].nActivationHeight;
+            return idx;
         }
     }
 
-    return boost::none;
+    return std::nullopt;
+}
+
+std::optional<int> NextActivationHeight(
+    int nHeight,
+    const Consensus::Params& params)
+{
+    auto idx = NextEpoch(nHeight, params);
+    if (idx) {
+        return params.vUpgrades[idx.value()].nActivationHeight;
+    }
+    return std::nullopt;
 }

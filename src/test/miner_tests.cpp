@@ -1,6 +1,6 @@
 // Copyright (c) 2011-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "arith_uint256.h"
 #include "consensus/validation.h"
@@ -135,10 +135,23 @@ struct {
     {"00000000000000000000000000000000000000000000000000000000000022de", "007f388bed6b91756ea3e0866716ef6e9485fae6160195c7cda5c1e43f96ee359e105bcf4e8c293690420939124f04a0196363910421187811575929db40500b0bfdd1e8964aa334b801e3339a336d585a30852f1dc294a2d3d36f9ecc747458f3d41b4572415496df2a9fb1f882156cdabf9f65e681f38019865d6d47482277e24c9b8973eb34a41254faae4c5e2caa9dde5925ec118f3d8fa767ae00f434645957154367afe72000c59c79182c8faddd24424b9ebbb09ccd651b00540c96b9c7eec648a28a1d72c2e575d0f2250078511a011598db8e0788edf0ddc15ae24b62f63d6f93f71a2743a3c43ece55471a9802a76f31561a6f365c3647029bfa736395883afc0632bc25d4a8661b25d5aa0310f3c3fd3a183e75d359d6de3e5910b5dfbb74b7660af906917dc42b12e3e484aae1dbd20eaee037ef301572b7fc24d85b4aff9c82b27dcd421cee1639230d0188fec59f0dd4c0ced69c1ad07abd23692b1bd30735af942df597dcf6f403a36371bc416cf3e29a58570f586b05c357dc49515689788ad9581b8887dd913a41dc35e1ac9c9f9f4ea534eb6b36cc8af0299b6d3905750425da0366bdc59a7824477d7946b6f35c4ec90b8e61790fa74a4fa92396ea856661027828d40abb11dbe36bba516fe8ec8913106677285a4790d8034d1d1bf9fd87990889ddffc369b954a3d1c172be7e1812226c2b100cbe82c42bf4423456b6cb2bac3b4828135cb54f7a933a01f7f4a2057ad92136ba8e19fec313b412d43c089a71f06fd1625329b78d49ac92c59e4080932ddb1645910fd874dfb1f358e214231f62041acc41fd2c4e7b7127b3042459e1457f6b307fce9825aa4d2b942277f52665f2a77dd107b4f16cb3280f20c7551ff6cd855f97a6144131f69bab5648fb4b81261eefbf629094e8bcc4e36077f46d51a647da51fc01dca9a9ac12e2f7e2e2b1c9229dae099e95370177143d3b38ab661f19758494a01b32f0c27155b45a872a867dc50f9d76473695e9e2c4f9357f5ba6bb6c455d985f4e2c21486fde6576c6a8ceda6e010a7dc2b504130f429ac33376781ee4af5bbe8d768005bc4cb5092b15c4f296a8bd8c54a298eecd790a5161755a8605cc46bf890b8ff93d508501842b78c7261e5deeb1096891c528a300e57bf2f0aa9e8af2623cdf16bba20427704120484b6af8be26e4983d2685c783ce85d0174f84598719c6beefcc3603a94d4aa62750725df50671d7f9903ec255f779643ebd2fd8122fae3319e61928dcdaa44880d6a483140de63d2d7d7dc9dd449e0ee00d908e0f2164fc054198641e8fb0d74279c9b4117884b9335028a9f50c7223d3c03675ecf73329e52603f77f20cffba99356e51a365b75825f7db56d77542784f3c2663c493a2e564d73f753e9d6ebb0c2f2027a2330a7117c67a20507474fc47282a02cb572de17bbc7a335959316f74a05e3687cfb5227bc5b1b7f084f50902760e77740d420df9a495521c09b911e5f199a8343918b8386fc74f22552a76524a22c8c70ff06084e7fefe9b3ab98e004fadf35eb5f60483f287851712d90ebdd6b512877170d3b7fb34f16813917ae3b5ed54ede6081bdd7cc646fb336658121fd8fbafc52959b48d13375dfa4ce8616c157533a05ee1dc1120f215c348b54357d68adb4da7f5f48d55c005b3e7a23d05746e44d968f7601d4dbdff702861030d6e3a4140e6e1a29978be541f713f8e2cc9aa1ac32fecc941ee4aa4c41bc7f91ea5328ff87cbf35a8de17d1d3d1ad6d4384b0df52d10b3984d62e1678e86dd150ee425490bc727ee7107fda0f5d2433ab1c5d407be9d123fad5c201355601d926d3923787be86a4aa5be0b8d5750171ad658f8e97798b5dcaed46345a9af70c441"},
 };
 
+// Copied from src/miner.cpp
+class MinerAddressScript : public CReserveScript
+{
+    // CReserveScript requires implementing this function, so that if an
+    // internal (not-visible) wallet address is used, the wallet can mark it as
+    // important when a block is mined (so it then appears to the user).
+    // If -mineraddress is set, the user already knows about and is managing the
+    // address, so we don't need to do anything here.
+    void KeepScript() {}
+};
+
 // NOTE: These tests rely on CreateNewBlock doing its own self-validation!
 BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
 {
-    CScript scriptPubKey = CScript() << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f") << OP_CHECKSIG;
+    const CChainParams& chainparams = Params(CBaseChainParams::MAIN);
+    boost::shared_ptr<MinerAddressScript> scriptPubKey(new MinerAddressScript());
+    scriptPubKey->reserveScript = CScript() << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f") << OP_CHECKSIG;
     CBlockTemplate *pblocktemplate;
     CMutableTransaction tx,tx2;
     CScript script;
@@ -150,7 +163,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
 
     LOCK(cs_main);
     fCheckpointsEnabled = false;
-    fCoinbaseEnforcedProtectionEnabled = false;
+    fCoinbaseEnforcedShieldingEnabled = false;
 
     // We can't make transactions until we have inputs
     // Therefore, load 100 blocks :)
@@ -158,7 +171,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
     for (unsigned int i = 0; i < sizeof(blockinfo)/sizeof(*blockinfo); ++i)
     {
         // Simple block creation, nothing special yet:
-        BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+        BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
 
         CBlock *pblock = &pblocktemplate->block; // pointer for convenience
         pblock->nVersion = 4;
@@ -167,7 +180,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
         // of the next block must be six spacings ahead of that to be at least
         // one spacing ahead of the tip. Within 11 blocks of genesis, the median
         // will be closer to the tip, and blocks will appear slower.
-        pblock->nTime = chainActive.Tip()->GetMedianTimePast()+6*Params().GetConsensus().nPowTargetSpacing;
+        pblock->nTime = chainActive.Tip()->GetMedianTimePast()+6*Params().GetConsensus().PoWTargetSpacing(i);
         CMutableTransaction txCoinbase(pblock->vtx[0]);
         txCoinbase.nVersion = 1;
         txCoinbase.vin[0].scriptSig = CScript() << (chainActive.Height()+1) << OP_0;
@@ -182,11 +195,11 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
 /*
         {
         arith_uint256 try_nonce(0);
-        unsigned int n = Params().EquihashN();
-        unsigned int k = Params().EquihashK();
+        unsigned int n = Params().GetConsensus().nEquihashN;
+        unsigned int k = Params().GetConsensus().nEquihashK;
 
         // Hash state
-        crypto_generichash_blake2b_state eh_state;
+        eh_HashState eh_state;
         EhInitialiseState(n, k, eh_state);
 
         // I = the block header minus nonce and solution.
@@ -195,21 +208,18 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
         ss << I;
 
         // H(I||...
-        crypto_generichash_blake2b_update(&eh_state, (unsigned char*)&ss[0], ss.size());
+        eh_state.Update((unsigned char*)&ss[0], ss.size());
 
         while (true) {
             pblock->nNonce = ArithToUint256(try_nonce);
 
             // H(I||V||...
-            crypto_generichash_blake2b_state curr_state;
-            curr_state = eh_state;
-            crypto_generichash_blake2b_update(&curr_state,
-                                              pblock->nNonce.begin(),
-                                              pblock->nNonce.size());
+            eh_HashState curr_state(eh_state);
+            curr_state.Update(pblock->nNonce.begin(), pblock->nNonce.size());
 
             // Create solver and initialize it.
             equi eq(1);
-            eq.setstate(&curr_state);
+            eq.setstate(curr_state.state);
 
             // Intialization done, start algo driver.
             eq.digit0(0);
@@ -234,10 +244,12 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
                 solns.insert(sol_char);
             }
 
-            bool ret;
             for (auto soln : solns) {
-                EhIsValidSolution(n, k, curr_state, soln, ret);
-                if (!ret) continue;
+                if (!librustzcash_eh_isvalid(
+                    n, k,
+                    (unsigned char*)&ss[0], ss.size(),
+                    pblock->nNonce.begin(), pblock->nNonce.size(),
+                    soln.data(), soln.size())) continue;
                 pblock->nSolution = soln;
 
                 CValidationState state;
@@ -260,11 +272,11 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
         }
 */
 
-        // These tests assume null hashFinalSaplingRoot (before Sapling)
-        pblock->hashFinalSaplingRoot = uint256();
+        // These tests assume null hashLightClientRoot (before Sapling)
+        pblock->hashLightClientRoot = uint256();
 
         CValidationState state;
-        BOOST_CHECK(ProcessNewBlock(state, NULL, pblock, true, NULL));
+        BOOST_CHECK(ProcessNewBlock(state, chainparams, NULL, pblock, true, NULL));
         BOOST_CHECK_MESSAGE(state.IsValid(), state.GetRejectReason());
         pblock->hashPrevBlock = pblock->GetHash();
 
@@ -273,7 +285,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
     }
 
     // Just to make sure we can still make simple blocks
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     delete pblocktemplate;
 
     // block sigops > limit: 1000 CHECKMULTISIG + 1
@@ -292,7 +304,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
         mempool.addUnchecked(hash, entry.Time(GetTime()).SpendsCoinbase(spendsCoinbase).FromTx(tx));
         tx.vin[0].prevout.hash = hash;
     }
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     delete pblocktemplate;
     mempool.clear();
 
@@ -313,14 +325,14 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
         mempool.addUnchecked(hash, entry.Time(GetTime()).SpendsCoinbase(spendsCoinbase).FromTx(tx));
         tx.vin[0].prevout.hash = hash;
     }
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     delete pblocktemplate;
     mempool.clear();
 
     // orphan in mempool
     hash = tx.GetHash();
     mempool.addUnchecked(hash, entry.Time(GetTime()).FromTx(tx));
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     delete pblocktemplate;
     mempool.clear();
 
@@ -338,7 +350,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
     tx.vout[0].nValue = 49000LL;
     hash = tx.GetHash();
     mempool.addUnchecked(hash, entry.Time(GetTime()).SpendsCoinbase(true).FromTx(tx));
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     delete pblocktemplate;
     mempool.clear();
 
@@ -349,7 +361,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
     tx.vout[0].nValue = 0;
     hash = tx.GetHash();
     mempool.addUnchecked(hash, entry.Time(GetTime()).SpendsCoinbase(false).FromTx(tx));
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     delete pblocktemplate;
     mempool.clear();
 
@@ -367,7 +379,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
     tx.vout[0].nValue -= 10000;
     hash = tx.GetHash();
     mempool.addUnchecked(hash, entry.Time(GetTime()).SpendsCoinbase(false).FromTx(tx));
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     delete pblocktemplate;
     mempool.clear();
 
@@ -381,17 +393,17 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
     tx.vout[0].scriptPubKey = CScript() << OP_2;
     hash = tx.GetHash();
     mempool.addUnchecked(hash, entry.Time(GetTime()).SpendsCoinbase(true).FromTx(tx));
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     delete pblocktemplate;
     mempool.clear();
 
     // subsidy changing
     int nHeight = chainActive.Height();
     chainActive.Tip()->nHeight = 209999;
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     delete pblocktemplate;
     chainActive.Tip()->nHeight = 210000;
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     delete pblocktemplate;
     chainActive.Tip()->nHeight = nHeight;
 
@@ -423,7 +435,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
     mempool.addUnchecked(hash, entry.Time(GetTime()).SpendsCoinbase(true).FromTx(tx2));
     BOOST_CHECK(!CheckFinalTx(tx2, LOCKTIME_MEDIAN_TIME_PAST));
 
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
 
     // Neither tx should have made it into the template.
     BOOST_CHECK_EQUAL(pblocktemplate->block.vtx.size(), 1);
@@ -438,7 +450,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
     //BOOST_CHECK(CheckFinalTx(tx));
     //BOOST_CHECK(CheckFinalTx(tx2));
 
-    BOOST_CHECK(pblocktemplate = CreateNewBlock(scriptPubKey));
+    BOOST_CHECK(pblocktemplate = CreateNewBlock(chainparams, scriptPubKey));
     BOOST_CHECK_EQUAL(pblocktemplate->block.vtx.size(), 2);
     delete pblocktemplate;
 
@@ -446,11 +458,11 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
     SetMockTime(0);
     mempool.clear();
 
-    BOOST_FOREACH(CTransaction *tx, txFirst)
+    for (CTransaction *tx : txFirst)
         delete tx;
 
     fCheckpointsEnabled = true;
-    fCoinbaseEnforcedProtectionEnabled = true;
+    fCoinbaseEnforcedShieldingEnabled = true;
 }
 
 BOOST_AUTO_TEST_SUITE_END()

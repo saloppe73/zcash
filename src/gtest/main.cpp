@@ -1,13 +1,12 @@
 #include "gmock/gmock.h"
 #include "crypto/common.h"
+#include "key.h"
 #include "pubkey.h"
-#include "zcash/JoinSplit.hpp"
 #include "util.h"
 
-#include <libsnark/common/default_types/r1cs_ppzksnark_pp.hpp>
-#include <libsnark/zk_proof_systems/ppzksnark/r1cs_ppzksnark/r1cs_ppzksnark.hpp>
-
 #include "librustzcash.h"
+
+const std::function<std::string(const char*)> G_TRANSLATION_FUN = nullptr;
 
 struct ECCryptoClosure
 {
@@ -16,31 +15,38 @@ struct ECCryptoClosure
 
 ECCryptoClosure instance_of_eccryptoclosure;
 
-ZCJoinSplit* params;
-
 int main(int argc, char **argv) {
   assert(init_and_check_sodium() != -1);
-  libsnark::default_r1cs_ppzksnark_pp::init_public_params();
-  libsnark::inhibit_profiling_info = true;
-  libsnark::inhibit_profiling_counters = true;
-  boost::filesystem::path pk_path = ZC_GetParamsDir() / "sprout-proving.key";
-  boost::filesystem::path vk_path = ZC_GetParamsDir() / "sprout-verifying.key";
-  params = ZCJoinSplit::Prepared(vk_path.string(), pk_path.string());
+  ECC_Start();
 
-  boost::filesystem::path sapling_spend = ZC_GetParamsDir() / "sapling-spend-testnet.params";
-  boost::filesystem::path sapling_output = ZC_GetParamsDir() / "sapling-output-testnet.params";
-  boost::filesystem::path sprout_groth16 = ZC_GetParamsDir() / "sprout-groth16-testnet.params";
+  fs::path sapling_spend = ZC_GetParamsDir() / "sapling-spend.params";
+  fs::path sapling_output = ZC_GetParamsDir() / "sapling-output.params";
+  fs::path sprout_groth16 = ZC_GetParamsDir() / "sprout-groth16.params";
 
-  std::string sapling_spend_str = sapling_spend.string();
-  std::string sapling_output_str = sapling_output.string();
-  std::string sprout_groth16_str = sprout_groth16.string();
+    static_assert(
+        sizeof(fs::path::value_type) == sizeof(codeunit),
+        "librustzcash not configured correctly");
+    auto sapling_spend_str = sapling_spend.native();
+    auto sapling_output_str = sapling_output.native();
+    auto sprout_groth16_str = sprout_groth16.native();
 
-  librustzcash_init_zksnark_params(
-      sapling_spend_str.c_str(),
-      sapling_output_str.c_str(),
-      sprout_groth16_str.c_str()
-  );
-  
+    librustzcash_init_zksnark_params(
+        reinterpret_cast<const codeunit*>(sapling_spend_str.c_str()),
+        sapling_spend_str.length(),
+        reinterpret_cast<const codeunit*>(sapling_output_str.c_str()),
+        sapling_output_str.length(),
+        reinterpret_cast<const codeunit*>(sprout_groth16_str.c_str()),
+        sprout_groth16_str.length()
+    );
+
   testing::InitGoogleMock(&argc, argv);
-  return RUN_ALL_TESTS();
+
+  // The "threadsafe" style is necessary for correct operation of death/exit
+  // tests on macOS (https://github.com/zcash/zcash/issues/4802).
+  testing::FLAGS_gtest_death_test_style = "threadsafe";
+
+  auto ret = RUN_ALL_TESTS();
+
+  ECC_Stop();
+  return ret;
 }

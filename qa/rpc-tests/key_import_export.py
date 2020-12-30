@@ -1,25 +1,28 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # Copyright (c) 2017 The Zcash developers
 # Distributed under the MIT software license, see the accompanying
-# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+# file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 from decimal import Decimal
+from functools import reduce
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, assert_greater_than, start_nodes, initialize_chain_clean, connect_nodes_bi
+from test_framework.util import assert_equal, assert_greater_than, start_nodes, connect_nodes_bi
 
 import logging
+import sys
 
-logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
+logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO, stream=sys.stdout)
 
 
 class KeyImportExportTest (BitcoinTestFramework):
 
-    def setup_chain(self):
-        print("Initializing test directory "+self.options.tmpdir)
-        initialize_chain_clean(self.options.tmpdir, 4)
+    def __init__(self):
+        super().__init__()
+        self.num_nodes = 4
+        self.setup_clean_chain = True
 
     def setup_network(self, split=False):
-        self.nodes = start_nodes(4, self.options.tmpdir )
+        self.nodes = start_nodes(self.num_nodes, self.options.tmpdir )
         connect_nodes_bi(self.nodes,0,1)
         connect_nodes_bi(self.nodes,1,2)
         connect_nodes_bi(self.nodes,0,2)
@@ -38,11 +41,8 @@ class KeyImportExportTest (BitcoinTestFramework):
 
         def verify_utxos(node, amounts):
             utxos = node.listunspent(1, 10**9, [addr])
-
-            def cmp_confirmations_high_to_low(a, b):
-                return cmp(b["confirmations"], a["confirmations"])
-
-            utxos.sort(cmp_confirmations_high_to_low)
+            utxos.sort(key=lambda x: x["confirmations"])
+            utxos.reverse()
 
             try:
                 assert_equal(amounts, [utxo["amount"] for utxo in utxos])
@@ -64,7 +64,7 @@ class KeyImportExportTest (BitcoinTestFramework):
         verify_utxos(charlie, [])
 
         # the amounts of each txn embodied which generates a single UTXO:
-        amounts = map(Decimal, ['2.3', '3.7', '0.1', '0.5', '1.0', '0.19'])
+        amounts = list(map(Decimal, ['2.3', '3.7', '0.1', '0.5', '1.0', '0.19']))
 
         # Internal test consistency assertion:
         assert_greater_than(

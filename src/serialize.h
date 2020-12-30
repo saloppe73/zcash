@@ -1,7 +1,7 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #ifndef BITCOIN_SERIALIZE_H
 #define BITCOIN_SERIALIZE_H
@@ -16,6 +16,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stdint.h>
 #include <string>
@@ -23,7 +24,8 @@
 #include <utility>
 #include <vector>
 
-#include <boost/optional.hpp>
+
+#include <rust/ed25519/types.h>
 
 #include "prevector.h"
 
@@ -110,6 +112,11 @@ template<typename Stream> inline void ser_writedata32(Stream &s, uint32_t obj)
     obj = htole32(obj);
     s.write((char*)&obj, 4);
 }
+template<typename Stream> inline void ser_writedata32be(Stream &s, uint32_t obj)
+{
+    obj = htobe32(obj);
+    s.write((char*)&obj, 4);
+}
 template<typename Stream> inline void ser_writedata64(Stream &s, uint64_t obj)
 {
     obj = htole64(obj);
@@ -132,6 +139,12 @@ template<typename Stream> inline uint32_t ser_readdata32(Stream &s)
     uint32_t obj;
     s.read((char*)&obj, 4);
     return le32toh(obj);
+}
+template<typename Stream> inline uint32_t ser_readdata32be(Stream &s)
+{
+    uint32_t obj;
+    s.read((char*)&obj, 4);
+    return be32toh(obj);
 }
 template<typename Stream> inline uint64_t ser_readdata64(Stream &s)
 {
@@ -185,10 +198,10 @@ enum
 #define READWRITEMANY(...)      (::SerReadWriteMany(s, ser_action, __VA_ARGS__))
 
 /** 
- * Implement three methods for serializable objects. These are actually wrappers over
- * "SerializationOp" template, which implements the body of each class' serialization
- * code. Adding "ADD_SERIALIZE_METHODS" in the body of the class causes these wrappers to be
- * added as members. 
+ * Implement two methods, "Serialize" and "Unserialize", for serializable objects. These are
+ * actually wrappers over the "SerializationOp" template method, which implements the body of each
+ * classes' serialization code. Adding "ADD_SERIALIZE_METHODS" in the body of the class causes these
+ * wrapper methods to be added as members. 
  */
 #define ADD_SERIALIZE_METHODS                                         \
     template<typename Stream>                                         \
@@ -525,8 +538,8 @@ template<typename Stream, typename T, typename A> inline void Unserialize(Stream
 /**
  * optional
  */
-template<typename Stream, typename T> void Serialize(Stream& os, const boost::optional<T>& item);
-template<typename Stream, typename T> void Unserialize(Stream& is, boost::optional<T>& item);
+template<typename Stream, typename T> void Serialize(Stream& os, const std::optional<T>& item);
+template<typename Stream, typename T> void Unserialize(Stream& is, std::optional<T>& item);
 
 /**
  * array
@@ -569,6 +582,24 @@ template<typename Stream, typename T> void Unserialize(Stream& os, std::shared_p
  */
 template<typename Stream, typename T> void Serialize(Stream& os, const std::unique_ptr<const T>& p);
 template<typename Stream, typename T> void Unserialize(Stream& os, std::unique_ptr<const T>& p);
+
+/**
+ * Ed25519SigningKey
+ */
+template<typename Stream> void Serialize(Stream& os, const Ed25519SigningKey& item);
+template<typename Stream> void Unserialize(Stream& is, Ed25519SigningKey& item);
+
+/**
+ * Ed25519VerificationKey
+ */
+template<typename Stream> void Serialize(Stream& os, const Ed25519VerificationKey& item);
+template<typename Stream> void Unserialize(Stream& is, Ed25519VerificationKey& item);
+
+/**
+ * Ed25519Signature
+ */
+template<typename Stream> void Serialize(Stream& os, const Ed25519Signature& item);
+template<typename Stream> void Unserialize(Stream& is, Ed25519Signature& item);
 
 
 
@@ -753,7 +784,7 @@ inline void Unserialize(Stream& is, std::vector<T, A>& v)
  * optional
  */
 template<typename Stream, typename T>
-void Serialize(Stream& os, const boost::optional<T>& item)
+void Serialize(Stream& os, const std::optional<T>& item)
 {
     // If the value is there, put 0x01 and then serialize the value.
     // If it's not, put 0x00.
@@ -768,13 +799,13 @@ void Serialize(Stream& os, const boost::optional<T>& item)
 }
 
 template<typename Stream, typename T>
-void Unserialize(Stream& is, boost::optional<T>& item)
+void Unserialize(Stream& is, std::optional<T>& item)
 {
     unsigned char discriminant = 0x00;
     Unserialize(is, discriminant);
 
     if (discriminant == 0x00) {
-        item = boost::none;
+        item = std::nullopt;
     } else if (discriminant == 0x01) {
         T object;
         Unserialize(is, object);
@@ -936,6 +967,57 @@ template<typename Stream, typename T>
 void Unserialize(Stream& is, std::shared_ptr<const T>& p)
 {
     p = std::make_shared<const T>(deserialize, is);
+}
+
+
+
+/**
+ * Ed25519SigningKey
+ */
+template<typename Stream>
+void Serialize(Stream& os, const Ed25519SigningKey& sk)
+{
+    os.write((char*)sk.bytes, ED25519_SIGNING_KEY_LEN);
+}
+
+template<typename Stream>
+void Unserialize(Stream& is, Ed25519SigningKey& sk)
+{
+    is.read((char*)sk.bytes, ED25519_SIGNING_KEY_LEN);
+}
+
+
+
+/**
+ * Ed25519VerificationKey
+ */
+template<typename Stream>
+void Serialize(Stream& os, const Ed25519VerificationKey& vk)
+{
+    os.write((char*)vk.bytes, ED25519_VERIFICATION_KEY_LEN);
+}
+
+template<typename Stream>
+void Unserialize(Stream& is, Ed25519VerificationKey& vk)
+{
+    is.read((char*)vk.bytes, ED25519_VERIFICATION_KEY_LEN);
+}
+
+
+
+/**
+ * Ed25519Signature
+ */
+template<typename Stream>
+void Serialize(Stream& os, const Ed25519Signature& sig)
+{
+    os.write((char*)sig.bytes, ED25519_SIGNATURE_LEN);
+}
+
+template<typename Stream>
+void Unserialize(Stream& is, Ed25519Signature& sig)
+{
+    is.read((char*)sig.bytes, ED25519_SIGNATURE_LEN);
 }
 
 

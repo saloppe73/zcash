@@ -1,6 +1,6 @@
 // Copyright (c) 2012-2013 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "serialize.h"
 #include "streams.h"
@@ -9,10 +9,10 @@
 #include "utilstrencodings.h"
 
 #include <array>
+#include <optional>
 #include <stdint.h>
 
 #include <boost/test/unit_test.hpp>
-#include <boost/optional.hpp>
 
 using namespace std;
 
@@ -83,15 +83,15 @@ public:
 
 BOOST_AUTO_TEST_CASE(boost_optional)
 {
-    check_ser_rep<boost::optional<unsigned char>>(0xff, {0x01, 0xff});
-    check_ser_rep<boost::optional<unsigned char>>(boost::none, {0x00});
-    check_ser_rep<boost::optional<std::string>>(std::string("Test"), {0x01, 0x04, 'T', 'e', 's', 't'});
+    check_ser_rep<std::optional<unsigned char>>(0xff, {0x01, 0xff});
+    check_ser_rep<std::optional<unsigned char>>(std::nullopt, {0x00});
+    check_ser_rep<std::optional<std::string>>(std::string("Test"), {0x01, 0x04, 'T', 'e', 's', 't'});
 
     {
         // Ensure that canonical optional discriminant is used
         CDataStream ss(SER_DISK, 0);
         ss.write("\x02\x04Test", 6);
-        boost::optional<std::string> into;
+        std::optional<std::string> into;
 
         BOOST_CHECK_THROW(ss >> into, std::ios_base::failure);
     }

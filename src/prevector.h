@@ -1,5 +1,9 @@
-#ifndef _BITCOIN_PREVECTOR_H_
-#define _BITCOIN_PREVECTOR_H_
+// Copyright (c) 2015-2016 The Bitcoin Core developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
+
+#ifndef BITCOIN_PREVECTOR_H
+#define BITCOIN_PREVECTOR_H
 
 #include <util.h>
 
@@ -129,7 +133,7 @@ public:
         typedef const T* pointer;
         typedef const T& reference;
         typedef std::bidirectional_iterator_tag iterator_category;
-        const_reverse_iterator(T* ptr_) : ptr(ptr_) {}
+        const_reverse_iterator(const T* ptr_) : ptr(ptr_) {}
         const_reverse_iterator(reverse_iterator x) : ptr(&(*x)) {}
         const T& operator*() const { return *ptr; }
         const T* operator->() const { return ptr; }
@@ -491,4 +495,4 @@ public:
 };
 #pragma pack(pop)
 
-#endif
+#endif // BITCOIN_PREVECTOR_H

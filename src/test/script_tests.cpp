@@ -1,9 +1,9 @@
 // Copyright (c) 2011-2014 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
-#include "data/script_invalid.json.h"
-#include "data/script_valid.json.h"
+#include "test/data/script_invalid.json.h"
+#include "test/data/script_valid.json.h"
 
 #include "consensus/upgrades.h"
 #include "core_io.h"
@@ -15,6 +15,7 @@
 #include "script/sign.h"
 #include "util.h"
 #include "test/test_bitcoin.h"
+#include "test/test_util.h"
 
 #if defined(HAVE_CONSENSUS_LIB)
 #include "script/zcashconsensus.h"
@@ -25,7 +26,6 @@
 #include <string>
 #include <vector>
 
-#include <boost/foreach.hpp>
 #include <boost/test/unit_test.hpp>
 #include <boost/test/data/test_case.hpp>
 
@@ -37,22 +37,6 @@ using namespace std;
 // #define UPDATE_JSON_TESTS
 
 static const unsigned int flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC;
-
-unsigned int ParseScriptFlags(string strFlags);
-string FormatScriptFlags(unsigned int flags);
-
-UniValue
-read_json(const std::string& jsondata)
-{
-    UniValue v;
-
-    if (!v.read(jsondata) || !v.isArray())
-    {
-        BOOST_ERROR("Parse error.");
-        return UniValue(UniValue::VARR);
-    }
-    return v.get_array();
-}
 
 BOOST_FIXTURE_TEST_SUITE(script_tests, BasicTestingSetup)
 
@@ -547,7 +531,7 @@ BOOST_AUTO_TEST_CASE(script_build)
     std::string strGood;
     std::string strBad;
 
-    BOOST_FOREACH(TestBuilder& test, good) {
+    for (TestBuilder& test : good) {
         test.Test(true);
         std::string str = test.GetJSON().write();
 #ifndef UPDATE_JSON_TESTS
@@ -557,7 +541,7 @@ BOOST_AUTO_TEST_CASE(script_build)
 #endif
         strGood += str + ",\n";
     }
-    BOOST_FOREACH(TestBuilder& test, bad) {
+    for (TestBuilder& test : bad) {
         test.Test(false);
         std::string str = test.GetJSON().write();
 #ifndef UPDATE_JSON_TESTS
@@ -688,7 +672,7 @@ sign_multisig(CScript scriptPubKey, std::vector<CKey> keys, CTransaction transac
     // and vice-versa)
     //
     result << OP_0;
-    BOOST_FOREACH(const CKey &key, keys)
+    for (const CKey &key : keys)
     {
         vector<unsigned char> vchSig;
         BOOST_CHECK(key.Sign(hash, vchSig));

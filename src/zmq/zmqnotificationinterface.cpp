@@ -1,6 +1,6 @@
 // Copyright (c) 2015 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #include "zmqnotificationinterface.h"
 #include "zmqpublishnotifier.h"
@@ -39,6 +39,7 @@ CZMQNotificationInterface* CZMQNotificationInterface::CreateWithArguments(const 
     factories["pubhashtx"] = CZMQAbstractNotifier::Create<CZMQPublishHashTransactionNotifier>;
     factories["pubrawblock"] = CZMQAbstractNotifier::Create<CZMQPublishRawBlockNotifier>;
     factories["pubrawtx"] = CZMQAbstractNotifier::Create<CZMQPublishRawTransactionNotifier>;
+    factories["pubcheckedblock"] = CZMQAbstractNotifier::Create<CZMQPublishCheckedBlockNotifier>;
 
     for (std::map<std::string, CZMQNotifierFactory>::const_iterator i=factories.begin(); i!=factories.end(); ++i)
     {
@@ -72,10 +73,14 @@ CZMQNotificationInterface* CZMQNotificationInterface::CreateWithArguments(const 
 // Called at startup to conditionally set up ZMQ socket(s)
 bool CZMQNotificationInterface::Initialize()
 {
+    int major = 0, minor = 0, patch = 0;
+    zmq_version(&major, &minor, &patch);
+    LogPrint("zmq", "zmq: version %d.%d.%d\n", major, minor, patch);
+
     LogPrint("zmq", "zmq: Initialize notification interface\n");
     assert(!pcontext);
 
-    pcontext = zmq_init(1);
+    pcontext = zmq_ctx_new();
 
     if (!pcontext)
     {
@@ -118,7 +123,7 @@ void CZMQNotificationInterface::Shutdown()
             LogPrint("zmq", "   Shutdown notifier %s at %s\n", notifier->GetType(), notifier->GetAddress());
             notifier->Shutdown();
         }
-        zmq_ctx_destroy(pcontext);
+        zmq_ctx_term(pcontext);
 
         pcontext = 0;
     }
@@ -141,7 +146,28 @@ void CZMQNotificationInterface::UpdatedBlockTip(const CBlockIndex *pindex)
     }
 }
 
-void CZMQNotificationInterface::SyncTransaction(const CTransaction &tx, const CBlock *pblock)
+void CZMQNotificationInterface::BlockChecked(const CBlock& block, const CValidationState& state)
+{
+    if (state.IsInvalid()) {
+        return;
+    }
+
+    for (std::list<CZMQAbstractNotifier*>::iterator i = notifiers.begin(); i!=notifiers.end(); )
+    {
+        CZMQAbstractNotifier *notifier = *i;
+        if (notifier->NotifyBlock(block))
+        {
+            i++;
+        }
+        else
+        {
+            notifier->Shutdown();
+            i = notifiers.erase(i);
+        }
+    }
+}
+
+void CZMQNotificationInterface::SyncTransaction(const CTransaction &tx, const CBlock *pblock, const int nHeight)
 {
     for (std::list<CZMQAbstractNotifier*>::iterator i = notifiers.begin(); i!=notifiers.end(); )
     {

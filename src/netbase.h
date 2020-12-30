@@ -1,6 +1,6 @@
 // Copyright (c) 2009-2013 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 #ifndef BITCOIN_NETBASE_H
 #define BITCOIN_NETBASE_H
@@ -19,8 +19,10 @@
 extern int nConnectTimeout;
 extern bool fNameLookup;
 
-/** -timeout default */
+//! -timeout default
 static const int DEFAULT_CONNECT_TIMEOUT = 5000;
+//! -dns default
+static const int DEFAULT_NAME_LOOKUP = true;
 
 #ifdef WIN32
 // In MSVC, this is defined as a macro, undefine it to prevent a compile and link error

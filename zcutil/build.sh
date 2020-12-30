@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
+export LC_ALL=C
 set -eu -o pipefail
+set +x
 
 function cmd_pref() {
     if type -p "$2" > /dev/null; then
@@ -33,15 +35,7 @@ if [[ -z "${HOST-}" ]]; then
     HOST="$BUILD"
 fi
 
-# Allow override to $CC and $CXX for porters. Most users will not need it.
-if [[ -z "${CC-}" ]]; then
-    CC=gcc
-fi
-if [[ -z "${CXX-}" ]]; then
-    CXX=g++
-fi
-
-# Allow users to set arbitary compile flags. Most users will not need this.
+# Allow users to set arbitrary compile flags. Most users will not need this.
 if [[ -z "${CONFIGURE_FLAGS-}" ]]; then
     CONFIGURE_FLAGS=""
 fi
@@ -54,66 +48,34 @@ Usage:
 $0 --help
   Show this help message and exit.
 
-$0 [ --enable-lcov || --disable-tests ] [ --disable-mining ] [ --enable-proton ] [ --disable-libs ] [ MAKEARGS... ]
+$0 [ MAKEARGS... ]
   Build Zcash and most of its transitive dependencies from
   source. MAKEARGS are applied to both dependencies and Zcash itself.
 
-  If --enable-lcov is passed, Zcash is configured to add coverage
-  instrumentation, thus enabling "make cov" to work.
-  If --disable-tests is passed instead, the Zcash tests are not built.
+  Pass flags to ./configure using the CONFIGURE_FLAGS environment variable.
+  For example, to enable coverage instrumentation (thus enabling "make cov"
+  to work), call:
 
-  If --disable-mining is passed, Zcash is configured to not build any mining
-  code. It must be passed after the test arguments, if present.
+      CONFIGURE_FLAGS="--enable-lcov --disable-hardening" ./zcutil/build.sh
 
-  If --enable-proton is passed, Zcash is configured to build the Apache Qpid Proton
-  library required for AMQP support. This library is not built by default.
-  It must be passed after the test/mining arguments, if present.
+  For verbose output, use:
+      ./zcutil/build.sh V=1
 EOF
     exit 0
 fi
 
 set -x
 
-# If --enable-lcov is the first argument, enable lcov coverage support:
-LCOV_ARG=''
-HARDENING_ARG='--enable-hardening'
-TEST_ARG=''
-if [ "x${1:-}" = 'x--enable-lcov' ]
-then
-    LCOV_ARG='--enable-lcov'
-    HARDENING_ARG='--disable-hardening'
-    shift
-elif [ "x${1:-}" = 'x--disable-tests' ]
-then
-    TEST_ARG='--enable-tests=no'
-    shift
-fi
-
-# If --disable-mining is the next argument, disable mining code:
-MINING_ARG=''
-if [ "x${1:-}" = 'x--disable-mining' ]
-then
-    MINING_ARG='--enable-mining=no'
-    shift
-fi
-
-# If --enable-proton is the next argument, enable building Proton code:
-PROTON_ARG='--enable-proton=no'
-if [ "x${1:-}" = 'x--enable-proton' ]
-then
-    PROTON_ARG=''
-    shift
-fi
-
-PREFIX="$(pwd)/depends/$BUILD/"
-
 eval "$MAKE" --version
-eval "$CC" --version
-eval "$CXX" --version
 as --version
-ld -v
 
-HOST="$HOST" BUILD="$BUILD" NO_PROTON="$PROTON_ARG" "$MAKE" "$@" -C ./depends/ V=1
+HOST="$HOST" BUILD="$BUILD" "$MAKE" "$@" -C ./depends/
+
+if [ "${BUILD_STAGE:-all}" = "depends" ]
+then
+    exit 0
+fi
+
 ./autogen.sh
-CC="$CC" CXX="$CXX" ./configure --prefix="${PREFIX}" --host="$HOST" --build="$BUILD" "$HARDENING_ARG" "$LCOV_ARG" "$TEST_ARG" "$MINING_ARG" "$PROTON_ARG" $CONFIGURE_FLAGS --enable-werror CXXFLAGS='-g'
-"$MAKE" "$@" V=1
+CONFIG_SITE="$PWD/depends/$HOST/share/config.site" ./configure $CONFIGURE_FLAGS
+"$MAKE" "$@"

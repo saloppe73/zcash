@@ -13,6 +13,10 @@ body size, race, ethnicity, age, religion, or nationality.
 Examples of unacceptable behavior by participants include:
 
 * The use of sexualized language or imagery
+* The use of language or imagery that originates with, or has been
+  adopted as a symbol or "dog-whistle" for, any of: right-wing extremism,
+  anti-Semitism, Islamophobia, white supremacism, eugenics, homophobia, or
+  transphobia (whether or not the use by itself falls into those categories)
 * Personal attacks
 * Trolling or insulting/derogatory comments
 * Public or private harassment
@@ -25,7 +29,7 @@ reject comments, commits, code, wiki edits, issues, and other contributions
 that are not aligned to this Code of Conduct, or to ban temporarily or
 permanently any contributor for other behaviors that they deem inappropriate,
 threatening, offensive, or harmful. Note that contributors may be volunteers
-who do not represent Zcash Company. They are free to express their own
+who do not represent Electric Coin Company. They are free to express their own
 opinions so long as they adhere to these guidelines.
 
 By adopting this Code of Conduct, project maintainers commit themselves to

@@ -1,22 +1,22 @@
-#!/usr/bin/env python2
-# Copyright (c) 2015 The Bitcoin Core developers
+#!/usr/bin/env python3
+# Copyright (c) 2015-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
-# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+# file COPYING or https://www.opensource.org/licenses/mit-license.php .
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, initialize_chain_clean, \
-    start_nodes
+from test_framework.util import assert_equal, start_nodes
 
 
 class SignRawTransactionsTest(BitcoinTestFramework):
     """Tests transaction signing via RPC command "signrawtransaction"."""
 
-    def setup_chain(self):
-        print('Initializing test directory ' + self.options.tmpdir)
-        initialize_chain_clean(self.options.tmpdir, 1)
+    def __init__(self):
+        super().__init__()
+        self.setup_clean_chain = True
+        self.num_nodes = 1
 
     def setup_network(self, split=False):
-        self.nodes = start_nodes(1, self.options.tmpdir)
+        self.nodes = start_nodes(self.num_nodes, self.options.tmpdir)
         self.is_network_split = False
 
     def successful_signing_test(self):
@@ -36,7 +36,8 @@ class SignRawTransactionsTest(BitcoinTestFramework):
 
         outputs = {'tmJXomn8fhYy3AFqDEteifjHRMUdKtBuTGM': 0.1}
 
-        rawTx = self.nodes[0].createrawtransaction(inputs, outputs)
+        # Also test setting an expiry height of 0.
+        rawTx = self.nodes[0].createrawtransaction(inputs, outputs, 0, 0)
         rawTxSigned = self.nodes[0].signrawtransaction(rawTx, inputs, privKeys)
 
         # 1) The transaction has a complete set of signatures

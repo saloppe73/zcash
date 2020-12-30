@@ -13,24 +13,18 @@
 
 #include <array>
 
+#include <rust/ed25519/types.h>
+
 namespace libzcash {
-
-static constexpr size_t GROTH_PROOF_SIZE = (
-    48 + // π_A
-    96 + // π_B
-    48); // π_C
-
-typedef std::array<unsigned char, GROTH_PROOF_SIZE> GrothProof;
-typedef boost::variant<PHGRProof, GrothProof> SproutProof;
 
 class JSInput {
 public:
-    ZCIncrementalWitness witness;
+    SproutWitness witness;
     SproutNote note;
     SproutSpendingKey key;
 
     JSInput();
-    JSInput(ZCIncrementalWitness witness,
+    JSInput(SproutWitness witness,
             SproutNote note,
             SproutSpendingKey key) : witness(witness), note(note), key(key) { }
 
@@ -54,28 +48,19 @@ public:
 template<size_t NumInputs, size_t NumOutputs>
 class JoinSplit {
 public:
-    virtual ~JoinSplit() {}
-
-    static void Generate(const std::string r1csPath,
-                         const std::string vkPath,
-                         const std::string pkPath);
-    static JoinSplit<NumInputs, NumOutputs>* Prepared(const std::string vkPath,
-                                                      const std::string pkPath);
-
     static uint256 h_sig(const uint256& randomSeed,
                          const std::array<uint256, NumInputs>& nullifiers,
-                         const uint256& joinSplitPubKey
+                         const Ed25519VerificationKey& joinSplitPubKey
                         );
 
     // Compute nullifiers, macs, note commitments & encryptions, and SNARK proof
-    virtual SproutProof prove(
-        bool makeGrothProof,
+    static SproutProof prove(
         const std::array<JSInput, NumInputs>& inputs,
         const std::array<JSOutput, NumOutputs>& outputs,
         std::array<SproutNote, NumOutputs>& out_notes,
         std::array<ZCNoteEncryption::Ciphertext, NumOutputs>& out_ciphertexts,
         uint256& out_ephemeralKey,
-        const uint256& joinSplitPubKey,
+        const Ed25519VerificationKey& joinSplitPubKey,
         uint256& out_randomSeed,
         std::array<uint256, NumInputs>& out_hmacs,
         std::array<uint256, NumInputs>& out_nullifiers,
@@ -88,23 +73,7 @@ public:
         // Reference as non-const parameter with default value leads to compile error.
         // So use pointer for simplicity.
         uint256 *out_esk = nullptr
-    ) = 0;
-
-    virtual bool verify(
-        const PHGRProof& proof,
-        ProofVerifier& verifier,
-        const uint256& joinSplitPubKey,
-        const uint256& randomSeed,
-        const std::array<uint256, NumInputs>& hmacs,
-        const std::array<uint256, NumInputs>& nullifiers,
-        const std::array<uint256, NumOutputs>& commitments,
-        uint64_t vpub_old,
-        uint64_t vpub_new,
-        const uint256& rt
-    ) = 0;
-
-protected:
-    JoinSplit() {}
+    );
 };
 
 }
