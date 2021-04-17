@@ -1,7 +1,7 @@
 dnl require autoconf 2.60 (AS_ECHO/AS_ECHO_N)
 AC_PREREQ([2.60])
 define(_CLIENT_VERSION_MAJOR, 4)
-define(_CLIENT_VERSION_MINOR, 2)
+define(_CLIENT_VERSION_MINOR, 4)
 define(_CLIENT_VERSION_REVISION, 0)
 define(_CLIENT_VERSION_BUILD, 50)
 define(_ZC_BUILD_VAL, m4_if(m4_eval(_CLIENT_VERSION_BUILD < 25), 1, m4_incr(_CLIENT_VERSION_BUILD), m4_eval(_CLIENT_VERSION_BUILD < 50), 1, m4_eval(_CLIENT_VERSION_BUILD - 24), m4_eval(_CLIENT_VERSION_BUILD == 50), 1, , m4_eval(_CLIENT_VERSION_BUILD - 50)))
@@ -374,25 +374,26 @@ case $host in
      use_pkgconfig=no
 
      TARGET_OS=windows
-     AC_CHECK_LIB([mingwthrd],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([kernel32],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([user32],      [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([mingwthrd],  [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([kernel32],   [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([user32],     [main],, AC_MSG_ERROR(lib missing))
      AC_CHECK_LIB([gdi32],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([comdlg32],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([winspool],      [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([comdlg32],   [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([winspool],   [main],, AC_MSG_ERROR(lib missing))
      AC_CHECK_LIB([winmm],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([shell32],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([comctl32],      [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([shell32],    [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([comctl32],   [main],, AC_MSG_ERROR(lib missing))
      AC_CHECK_LIB([ole32],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([oleaut32],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([uuid],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([rpcrt4],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([advapi32],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([ws2_32],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([mswsock],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([shlwapi],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([iphlpapi],      [main],, AC_MSG_ERROR(lib missing))
-     AC_CHECK_LIB([crypt32],      [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([oleaut32],   [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([uuid],       [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([rpcrt4],     [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([advapi32],   [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([ws2_32],     [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([mswsock],    [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([shlwapi],    [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([iphlpapi],   [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([crypt32],    [main],, AC_MSG_ERROR(lib missing))
+     AC_CHECK_LIB([ntdll],      [main],, AC_MSG_ERROR(lib missing))
 
      # -static is interpreted by libtool, where it has a different meaning.
      # In libtool-speak, it's -all-static.
@@ -479,15 +480,38 @@ case $host in
      CPPFLAGS="$CPPFLAGS -DMAC_OSX"
      OBJCXXFLAGS="$CXXFLAGS"
      ;;
+   *android*)
+     dnl make sure android stays above linux for hosts like *linux-android*
+     TARGET_OS=android
+     LEVELDB_TARGET_FLAGS="-DOS_ANDROID"
+     ;;
    *linux*)
+     TARGET_OS=linux
      LEVELDB_TARGET_FLAGS="-DOS_LINUX"
+     ;;
+   *kfreebsd*)
+     LEVELDB_TARGET_FLAGS="-DOS_KFREEBSD"
      ;;
    *freebsd*)
      LEVELDB_TARGET_FLAGS="-DOS_FREEBSD"
      ;;
+   *openbsd*)
+     LEVELDB_TARGET_FLAGS="-DOS_OPENBSD"
+     ;;
+   *netbsd*)
+     LEVELDB_TARGET_FLAGS="-DOS_NETBSD"
+     ;;
+   *dragonfly*)
+     LEVELDB_TARGET_FLAGS="-DOS_DRAGONFLYBSD"
+     ;;
+   *solaris*)
+     LEVELDB_TARGET_FLAGS="-DOS_SOLARIS"
+     ;;
+   *hpux*)
+     LEVELDB_TARGET_FLAGS="-DOS_HPUX"
+     ;;
    *)
-     OTHER_OS=`echo ${host_os} | awk '{print toupper($0)}'`
-     LEVELDB_TARGET_FLAGS="-DOS_${OTHER_OS}"
+     AC_MSG_ERROR(Cannot build leveldb for $host. Please file a bug report.)
      ;;
 esac
 
@@ -661,6 +685,8 @@ AC_CHECK_DECLS([bswap_16, bswap_32, bswap_64],,,
 		[#if HAVE_BYTESWAP_H
                  #include <byteswap.h>
                  #endif])
+
+AC_CHECK_DECLS([__builtin_clz, __builtin_clzl, __builtin_clzll])
 
 dnl Check for MSG_NOSIGNAL
 AC_MSG_CHECKING(for MSG_NOSIGNAL)
@@ -849,8 +875,8 @@ AC_MSG_RESULT($build_bitcoin_utils)
 AC_MSG_CHECKING([whether to build libraries])
 AM_CONDITIONAL([BUILD_BITCOIN_LIBS], [test x$build_bitcoin_libs = xyes])
 if test x$build_bitcoin_libs = xyes; then
-  AC_DEFINE(HAVE_CONSENSUS_LIB, 1, [Define this symbol if the consensus lib has been built])
-  AC_CONFIG_FILES([libzcashconsensus.pc:libzcashconsensus.pc.in])
+  AC_DEFINE(HAVE_SCRIPT_LIB, 1, [Define this symbol if the script lib has been built])
+  AC_CONFIG_FILES([libzcash_script.pc:libzcash_script.pc.in])
 fi
 
 AC_MSG_RESULT($build_bitcoin_libs)

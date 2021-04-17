@@ -506,7 +506,7 @@ void CTxMemPool::check(const CCoinsViewCache *pcoins) const
     const int64_t nSpendHeight = GetSpendHeight(mempoolDuplicate);
 
     LOCK(cs);
-    list<const CTxMemPoolEntry*> waitingOnDependants;
+    std::list<const CTxMemPoolEntry*> waitingOnDependants;
     for (indexed_transaction_set::const_iterator it = mapTx.begin(); it != mapTx.end(); it++) {
         unsigned int i = 0;
         checkTotal += it->GetTxSize();
@@ -532,7 +532,9 @@ void CTxMemPool::check(const CCoinsViewCache *pcoins) const
             i++;
         }
 
-        boost::unordered_map<uint256, SproutMerkleTree, CCoinsKeyHasher> intermediates;
+        // The SaltedTxidHasher is fine to use here; it salts the map keys automatically
+        // with randomness generated on construction.
+        boost::unordered_map<uint256, SproutMerkleTree, SaltedTxidHasher> intermediates;
 
         for (const JSDescription &joinsplit : tx.vJoinSplit) {
             for (const uint256 &nf : joinsplit.nullifiers) {
@@ -626,7 +628,7 @@ void CTxMemPool::checkNullifiers(ShieldedType type) const
     }
 }
 
-void CTxMemPool::queryHashes(vector<uint256>& vtxid)
+void CTxMemPool::queryHashes(std::vector<uint256>& vtxid)
 {
     vtxid.clear();
 
@@ -691,7 +693,7 @@ CTxMemPool::ReadFeeEstimates(CAutoFile& filein)
     return true;
 }
 
-void CTxMemPool::PrioritiseTransaction(const uint256 hash, const string strHash, double dPriorityDelta, const CAmount& nFeeDelta)
+void CTxMemPool::PrioritiseTransaction(const uint256 hash, const std::string strHash, double dPriorityDelta, const CAmount& nFeeDelta)
 {
     {
         LOCK(cs);

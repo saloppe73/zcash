@@ -30,6 +30,7 @@ zcash_gtest_SOURCES += \
 	gtest/test_deprecation.cpp \
 	gtest/test_dynamicusage.cpp \
 	gtest/test_equihash.cpp \
+	gtest/test_feature_flagging.cpp \
 	gtest/test_history.cpp \
 	gtest/test_httprpc.cpp \
 	gtest/test_joinsplit.cpp \
@@ -80,7 +81,7 @@ zcash_gtest_LDADD = \
   $(LIBSECP256K1)
 
 zcash_gtest_LDADD += \
-  $(LIBZCASH_CONSENSUS) \
+  $(LIBZCASH_SCRIPT) \
   $(BOOST_LIBS) \
   $(BOOST_UNIT_TEST_FRAMEWORK_LIB) \
   $(BDB_LIBS) \

@@ -64,9 +64,10 @@
 #include "zmq/zmqnotificationinterface.h"
 #endif
 
+#include <rust/metrics.h>
+
 #include "librustzcash.h"
 
-using namespace std;
 using namespace boost::placeholders;
 
 extern void ThreadSendAlert();
@@ -311,10 +312,10 @@ void OnRPCStopped()
 void OnRPCPreCommand(const CRPCCommand& cmd)
 {
     // Observe safe mode
-    string strWarning = GetWarnings("rpc").first;
+    std::string strWarning = GetWarnings("rpc").first;
     if (strWarning != "" && !GetBoolArg("-disablesafemode", DEFAULT_DISABLE_SAFEMODE) &&
         !cmd.okSafeMode)
-        throw JSONRPCError(RPC_FORBIDDEN_BY_SAFE_MODE, string("Safe mode: ") + strWarning);
+        throw JSONRPCError(RPC_FORBIDDEN_BY_SAFE_MODE, std::string("Safe mode: ") + strWarning);
 }
 
 std::string HelpMessage(HelpMessageMode mode)
@@ -324,11 +325,13 @@ std::string HelpMessage(HelpMessageMode mode)
     // When adding new options to the categories, please keep and ensure alphabetical ordering.
     // Do not translate _(...) -help-debug options, many technical terms, and only a very small audience, so is unnecessary stress to translators
 
-    string strUsage = HelpMessageGroup(_("Options:"));
+    std::string strUsage = HelpMessageGroup(_("Options:"));
     strUsage += HelpMessageOpt("-?", _("This help message"));
     strUsage += HelpMessageOpt("-alerts", strprintf(_("Receive and display P2P network alerts (default: %u)"), DEFAULT_ALERTS));
     strUsage += HelpMessageOpt("-alertnotify=<cmd>", _("Execute command when a relevant alert is received or we see a really long fork (%s in cmd is replaced by message)"));
     strUsage += HelpMessageOpt("-blocknotify=<cmd>", _("Execute command when the best block changes (%s in cmd is replaced by block hash)"));
+    if (showDebug)
+        strUsage += HelpMessageOpt("-blocksonly", strprintf(_("Whether to reject transactions from network peers. Automatic broadcast and rebroadcast of any transactions from inbound peers is disabled, unless '-whitelistforcerelay' is '1', in which case whitelisted peers' transactions will be relayed. RPC transactions are not affected. (default: %u)"), DEFAULT_BLOCKSONLY));
     strUsage += HelpMessageOpt("-checkblocks=<n>", strprintf(_("How many blocks to check at startup (default: %u, 0 = all)"), DEFAULT_CHECKBLOCKS));
     strUsage += HelpMessageOpt("-checklevel=<n>", strprintf(_("How thorough the block verification of -checkblocks is (0-4, default: %u)"), DEFAULT_CHECKLEVEL));
     strUsage += HelpMessageOpt("-conf=<file>", strprintf(_("Specify configuration file (default: %s)"), BITCOIN_CONF_FILENAME));
@@ -396,6 +399,9 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-whitebind=<addr>", _("Bind to given address and whitelist peers connecting to it. Use [host]:port notation for IPv6"));
     strUsage += HelpMessageOpt("-whitelist=<netmask>", _("Whitelist peers connecting from the given netmask or IP address. Can be specified multiple times.") +
         " " + _("Whitelisted peers cannot be DoS banned and their transactions are always relayed, even if they are already in the mempool, useful e.g. for a gateway"));
+    strUsage += HelpMessageOpt("-whitelistrelay", strprintf(_("Accept relayed transactions received from whitelisted inbound peers even when not relaying transactions (default: %d)"), DEFAULT_WHITELISTRELAY));
+    strUsage += HelpMessageOpt("-whitelistforcerelay", strprintf(_("Force relay of transactions from whitelisted inbound peers even they violate local relay policy (default: %d)"), DEFAULT_WHITELISTFORCERELAY));
+    strUsage += HelpMessageOpt("-maxuploadtarget=<n>", strprintf(_("Tries to keep outbound traffic under the given target (in MiB per 24h), 0 = no limit (default: %d)"), DEFAULT_MAX_UPLOAD_TARGET));
 
 #ifdef ENABLE_WALLET
     strUsage += CWallet::GetWalletHelpString(showDebug);
@@ -408,6 +414,15 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-zmqpubrawblock=<address>", _("Enable publish raw block in <address>"));
     strUsage += HelpMessageOpt("-zmqpubrawtx=<address>", _("Enable publish raw transaction in <address>"));
 #endif
+
+    strUsage += HelpMessageGroup(_("Monitoring options:"));
+    strUsage += HelpMessageOpt("-metricsallowip=<ip>", _("Allow metrics connections from specified source. "
+            "Valid for <ip> are a single IP (e.g. 1.2.3.4), a network/netmask (e.g. 1.2.3.4/255.255.255.0) or a network/CIDR (e.g. 1.2.3.4/24). "
+            "This option can be specified multiple times. (default: only localhost)"));
+    strUsage += HelpMessageOpt("-metricsbind=<addr>", _("Bind to given address to listen for metrics connections. (default: bind to all interfaces)"));
+    strUsage += HelpMessageOpt("-prometheusport=<port>", _("Expose node metrics in the Prometheus exposition format. "
+            "An HTTP listener will be started on <port>, which responds to GET requests on any request path. "
+            "Use -metricsallowip and -metricsbind to control access."));
 
     strUsage += HelpMessageGroup(_("Debugging/Testing options:"));
     if (showDebug)
@@ -424,7 +439,7 @@ std::string HelpMessage(HelpMessageMode mode)
                 "-fundingstream=streamId:startHeight:endHeight:comma_delimited_addresses",
                 "Use given addresses for block subsidy share paid to the funding stream with id <streamId> (regtest-only)");
     }
-    string debugCategories = "addrman, alert, bench, coindb, db, estimatefee, http, libevent, lock, mempool, net, partitioncheck, pow, proxy, prune, "
+    std::string debugCategories = "addrman, alert, bench, coindb, db, estimatefee, http, libevent, lock, mempool, net, partitioncheck, pow, proxy, prune, "
                              "rand, receiveunsafe, reindex, rpc, selectcoins, tor, zmq, zrpc, zrpcunsafe (implies zrpc)"; // Don't translate these
     strUsage += HelpMessageOpt("-debug=<category>", strprintf(_("Output debugging information (default: %u, supplying <category> is optional)"), 0) + ". " +
         _("If <category> is not supplied or if <category> = 1, output all debugging information.") + " " + _("<category> can be:") + " " + debugCategories + ". " +
@@ -550,7 +565,7 @@ struct CImportingNow
 void CleanupBlockRevFiles()
 {
     using namespace fs;
-    map<string, path> mapBlockFiles;
+    std::map<std::string, path> mapBlockFiles;
 
     // Glob all blk?????.dat and rev?????.dat files from the blocks directory.
     // Remove the rev files immediately and insert the blk file paths into an
@@ -574,7 +589,7 @@ void CleanupBlockRevFiles()
     // keeping a separate counter.  Once we hit a gap (or if 0 doesn't exist)
     // start removing block files.
     int nContigCounter = 0;
-    for (const std::pair<string, path>& item : mapBlockFiles) {
+    for (const std::pair<std::string, path>& item : mapBlockFiles) {
         if (atoi(item.first) == nContigCounter) {
             nContigCounter++;
             continue;
@@ -797,6 +812,22 @@ void InitParameterInteraction()
         if (SoftSetBoolArg("-rescan", true))
             LogPrintf("%s: parameter interaction: -zapwallettxes=<mode> -> setting -rescan=1\n", __func__);
     }
+
+    // disable walletbroadcast and whitelistrelay in blocksonly mode
+    if (GetBoolArg("-blocksonly", DEFAULT_BLOCKSONLY)) {
+        if (SoftSetBoolArg("-whitelistrelay", false))
+            LogPrintf("%s: parameter interaction: -blocksonly=1 -> setting -whitelistrelay=0\n", __func__);
+#ifdef ENABLE_WALLET
+        if (SoftSetBoolArg("-walletbroadcast", false))
+            LogPrintf("%s: parameter interaction: -blocksonly=1 -> setting -walletbroadcast=0\n", __func__);
+#endif
+    }
+
+    // Forcing relay from whitelisted hosts implies we will accept relays from them in the first place.
+    if (GetBoolArg("-whitelistforcerelay", DEFAULT_WHITELISTFORCERELAY)) {
+        if (SoftSetBoolArg("-whitelistrelay", true))
+            LogPrintf("%s: parameter interaction: -whitelistforcerelay=1 -> setting -whitelistrelay=1\n", __func__);
+    }
 }
 
 void InitLogging()
@@ -910,21 +941,13 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
     // ********************************************************* Step 2: parameter interactions
     const CChainParams& chainparams = Params();
 
+    // also see: InitParameterInteraction()
+
     // Set this early so that experimental features are correctly enabled/disabled
     auto err = InitExperimentalMode();
     if (err) {
         return InitError(err.value());
     }
-
-    // Make sure enough file descriptors are available
-    int nBind = std::max((int)mapArgs.count("-bind") + (int)mapArgs.count("-whitebind"), 1);
-    nMaxConnections = GetArg("-maxconnections", DEFAULT_MAX_PEER_CONNECTIONS);
-    nMaxConnections = std::max(std::min(nMaxConnections, FD_SETSIZE - nBind - MIN_CORE_FILEDESCRIPTORS), 0);
-    int nFD = RaiseFileDescriptorLimit(nMaxConnections + MIN_CORE_FILEDESCRIPTORS);
-    if (nFD < MIN_CORE_FILEDESCRIPTORS)
-        return InitError(_("Not enough file descriptors available."));
-    if (nFD - MIN_CORE_FILEDESCRIPTORS < nMaxConnections)
-        nMaxConnections = nFD - MIN_CORE_FILEDESCRIPTORS;
 
     // if using block pruning, then disable txindex
     if (GetArg("-prune", 0)) {
@@ -936,6 +959,21 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
         }
 #endif
     }
+
+    // Make sure enough file descriptors are available
+    int nBind = std::max((int)mapArgs.count("-bind") + (int)mapArgs.count("-whitebind"), 1);
+    int nUserMaxConnections = GetArg("-maxconnections", DEFAULT_MAX_PEER_CONNECTIONS);
+    nMaxConnections = std::max(nUserMaxConnections, 0);
+
+    // Trim requested connection counts, to fit into system limitations
+    nMaxConnections = std::max(std::min(nMaxConnections, FD_SETSIZE - nBind - MIN_CORE_FILEDESCRIPTORS), 0);
+    int nFD = RaiseFileDescriptorLimit(nMaxConnections + MIN_CORE_FILEDESCRIPTORS);
+    if (nFD < MIN_CORE_FILEDESCRIPTORS)
+        return InitError(_("Not enough file descriptors available."));
+    nMaxConnections = std::min(nFD - MIN_CORE_FILEDESCRIPTORS, nMaxConnections);
+
+    if (nMaxConnections < nUserMaxConnections)
+        InitWarning(strprintf(_("Reducing -maxconnections from %d to %d, because of system limitations."), nUserMaxConnections, nMaxConnections));
 
     // ensure that the user has not disabled checkpoints when requesting to
     // skip transaction verification in initial block download.
@@ -949,15 +987,15 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
 
     fDebug = !mapMultiArgs["-debug"].empty();
     // Special-case: if -debug=0/-nodebug is set, turn off debugging messages
-    const vector<string>& categories = mapMultiArgs["-debug"];
-    if (GetBoolArg("-nodebug", false) || find(categories.begin(), categories.end(), string("0")) != categories.end())
+    const std::vector<std::string>& categories = mapMultiArgs["-debug"];
+    if (GetBoolArg("-nodebug", false) || find(categories.begin(), categories.end(), std::string("0")) != categories.end())
         fDebug = false;
 
     // Special case: if debug=zrpcunsafe, implies debug=zrpc, so add it to debug categories
-    if (find(categories.begin(), categories.end(), string("zrpcunsafe")) != categories.end()) {
-        if (find(categories.begin(), categories.end(), string("zrpc")) == categories.end()) {
+    if (find(categories.begin(), categories.end(), std::string("zrpcunsafe")) != categories.end()) {
+        if (find(categories.begin(), categories.end(), std::string("zrpc")) == categories.end()) {
             LogPrintf("%s: parameter interaction: setting -debug=zrpcunsafe -> -debug=zrpc\n", __func__);
-            vector<string>& v = mapMultiArgs["-debug"];
+            std::vector<std::string>& v = mapMultiArgs["-debug"];
             v.push_back("zrpc");
         }
     }
@@ -1082,7 +1120,7 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
         if (chainparams.NetworkIDString() != "regtest") {
             return InitError("Network upgrade parameters may only be overridden on regtest.");
         }
-        const vector<string>& deployments = mapMultiArgs["-nuparams"];
+        const std::vector<std::string>& deployments = mapMultiArgs["-nuparams"];
         for (auto i : deployments) {
             std::vector<std::string> vDeploymentParams;
             boost::split(vDeploymentParams, i, boost::is_any_of(":"));
@@ -1215,6 +1253,34 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
     // Count uptime
     MarkStartTime();
 
+    int prometheusPort = GetArg("-prometheusport", -1);
+    if (prometheusPort > 0) {
+        const std::vector<std::string>& vAllow = mapMultiArgs["-metricsallowip"];
+        std::vector<const char*> vAllowCstr;
+        for (const std::string& strAllow : vAllow) {
+            vAllowCstr.push_back(strAllow.c_str());
+        }
+
+        std::string metricsBind = GetArg("-metricsbind", "");
+        const char* metricsBindCstr = nullptr;
+        if (!metricsBind.empty()) {
+            metricsBindCstr = metricsBind.c_str();
+        }
+
+        // Start up the metrics runtime. This spins off a Rust thread that runs
+        // the Prometheus exporter. We just let this thread die at process end.
+        LogPrintf("metrics thread start");
+        if (!metrics_run(metricsBindCstr, vAllowCstr.data(), vAllowCstr.size(), prometheusPort)) {
+            return InitError(strprintf(_("Failed to start Prometheus metrics exporter")));
+        }
+    }
+
+    // Expose binary metadata to metrics, using a single time series with value 1.
+    // https://www.robustperception.io/exposing-the-software-version-to-prometheus
+    MetricsIncrementCounter(
+        "zcashd.build.info",
+        "version", CLIENT_BUILD.c_str());
+
     if ((chainparams.NetworkIDString() != "regtest") &&
             GetBoolArg("-showmetrics", isatty(STDOUT_FILENO)) &&
             !fPrintToConsole && !GetBoolArg("-daemon", false)) {
@@ -1253,7 +1319,7 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
 
     // sanitize comments per BIP-0014, format user agent and check total size
     std::vector<string> uacomments;
-    for (string cmt : mapMultiArgs["-uacomment"])
+    for (std::string cmt : mapMultiArgs["-uacomment"])
     {
         if (cmt != SanitizeString(cmt, SAFE_CHARS_UA_COMMENT))
             return InitError(strprintf("User Agent comment (%s) contains unsafe characters.", cmt));
@@ -1374,6 +1440,11 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
         RegisterValidationInterface(pzmqNotificationInterface);
     }
 #endif
+    if (mapArgs.count("-maxuploadtarget")) {
+        CNode::SetMaxOutboundTarget(
+            chainparams.GetConsensus().nPostBlossomPowTargetSpacing,
+            GetArg("-maxuploadtarget", DEFAULT_MAX_UPLOAD_TARGET)*1024*1024);
+    }
 
     // ********************************************************* Step 7: load block chain
 
@@ -1717,12 +1788,6 @@ bool AppInit2(boost::thread_group& threadGroup, CScheduler& scheduler)
         StartTorControl(threadGroup, scheduler);
 
     StartNode(threadGroup, scheduler);
-
-    // Monitor the chain every minute, and alert if we get blocks much quicker or slower than expected.
-    CScheduler::Function f = boost::bind(&PartitionCheck, &IsInitialBlockDownload,
-                                         boost::cref(chainparams.GetConsensus()),
-                                         boost::ref(cs_main), boost::cref(pindexBestHeader));
-    scheduler.scheduleEvery(f, 60);
 
 #ifdef ENABLE_MINING
     // Generate coins in the background

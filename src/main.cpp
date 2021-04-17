@@ -46,6 +46,7 @@
 #include <boost/thread.hpp>
 
 #include <rust/ed25519.h>
+#include <rust/metrics.h>
 
 using namespace std;
 
@@ -64,11 +65,11 @@ CCriticalSection cs_main;
 BlockMap mapBlockIndex;
 CChain chainActive;
 CBlockIndex *pindexBestHeader = NULL;
-static int64_t nTimeBestReceived = 0;
+static std::atomic<int64_t> nTimeBestReceived(0); // Used only to inform the wallet of when we last received a block
 CWaitableCriticalSection csBestBlock;
 CConditionVariable cvBlockChange;
 int nScriptCheckThreads = 0;
-bool fImporting = false;
+std::atomic_bool fImporting(false);
 std::atomic_bool fReindex(false);
 bool fTxIndex = false;
 bool fAddressIndex = false;     // insightexplorer || lightwalletd
@@ -234,7 +235,7 @@ namespace {
      * million to make it highly unlikely for users to have issues with this
      * filter.
      *
-     * Memory used: 1.7MB
+     * Memory used: 1.3 MB
      */
     boost::scoped_ptr<CRollingBloomFilter> recentRejects;
     uint256 hashRecentRejectsChainTip;
@@ -361,7 +362,7 @@ int64_t GetBlockTimeout(int64_t nTime, int nValidatedQueuedBefore, const Consens
 void InitializeNode(NodeId nodeid, const CNode *pnode) {
     LOCK(cs_main);
     CNodeState &state = mapNodeState.insert(std::make_pair(nodeid, CNodeState())).first->second;
-    state.name = pnode->addrName;
+    state.name = pnode->GetAddrName();
     state.address = pnode->addr;
 }
 
@@ -812,15 +813,18 @@ bool ContextualCheckTransaction(
     auto dosLevelPotentiallyRelaxing = isMined ? DOS_LEVEL_BLOCK : (
         isInitBlockDownload(chainparams.GetConsensus()) ? 0 : DOS_LEVEL_MEMPOOL);
 
-    bool overwinterActive = chainparams.GetConsensus().NetworkUpgradeActive(nHeight, Consensus::UPGRADE_OVERWINTER);
-    bool saplingActive = chainparams.GetConsensus().NetworkUpgradeActive(nHeight, Consensus::UPGRADE_SAPLING);
+    auto consensus = chainparams.GetConsensus();
+    bool overwinterActive = consensus.NetworkUpgradeActive(nHeight, Consensus::UPGRADE_OVERWINTER);
+    bool saplingActive = consensus.NetworkUpgradeActive(nHeight, Consensus::UPGRADE_SAPLING);
     bool beforeOverwinter = !overwinterActive;
-    bool heartwoodActive = chainparams.GetConsensus().NetworkUpgradeActive(nHeight, Consensus::UPGRADE_HEARTWOOD);
-    bool canopyActive = chainparams.GetConsensus().NetworkUpgradeActive(nHeight, Consensus::UPGRADE_CANOPY);
+    bool heartwoodActive = consensus.NetworkUpgradeActive(nHeight, Consensus::UPGRADE_HEARTWOOD);
+    bool canopyActive = consensus.NetworkUpgradeActive(nHeight, Consensus::UPGRADE_CANOPY);
+    bool futureActive = consensus.NetworkUpgradeActive(nHeight, Consensus::UPGRADE_ZFUTURE);
 
     assert(!saplingActive || overwinterActive); // Sapling cannot be active unless Overwinter is
     assert(!heartwoodActive || saplingActive);  // Heartwood cannot be active unless Sapling is
     assert(!canopyActive || heartwoodActive);   // Canopy cannot be active unless Heartwood is
+    assert(!futureActive || canopyActive);      // ZFUTURE must always include the latest live version
 
     // Rules that apply only to Sprout
     if (beforeOverwinter) {
@@ -879,28 +883,32 @@ bool ContextualCheckTransaction(
 
     // Rules that apply to Sapling and later:
     if (saplingActive) {
-        // Reject transactions with non-Sapling version group ID
-        if (tx.nVersionGroupId != SAPLING_VERSION_GROUP_ID) {
-            return state.DoS(
-                dosLevelPotentiallyRelaxing,
-                error("ContextualCheckTransaction(): invalid Sapling tx version"),
-                REJECT_INVALID, "bad-sapling-tx-version-group-id");
+        // Reject transactions with invalid version
+        if (tx.nVersionGroupId == SAPLING_VERSION_GROUP_ID) {
+            if (tx.nVersion < SAPLING_MIN_TX_VERSION) {
+                return state.DoS(
+                    dosLevelConstricting,
+                    error("ContextualCheckTransaction(): Sapling version too low"),
+                    REJECT_INVALID, "bad-tx-sapling-version-too-low");
+            }
+
+            // Reject transactions with invalid version
+            if (tx.nVersion > SAPLING_MAX_TX_VERSION) {
+                return state.DoS(
+                    dosLevelPotentiallyRelaxing,
+                    error("ContextualCheckTransaction(): Sapling version too high"),
+                    REJECT_INVALID, "bad-tx-sapling-version-too-high");
+            }
         }
 
-        // Reject transactions with invalid version
-        if (tx.nVersion < SAPLING_MIN_TX_VERSION) {
-            return state.DoS(
-                dosLevelConstricting,
-                error("ContextualCheckTransaction(): Sapling version too low"),
-                REJECT_INVALID, "bad-tx-sapling-version-too-low");
-        }
-
-        // Reject transactions with invalid version
-        if (tx.nVersion > SAPLING_MAX_TX_VERSION) {
-            return state.DoS(
-                dosLevelPotentiallyRelaxing,
-                error("ContextualCheckTransaction(): Sapling version too high"),
-                REJECT_INVALID, "bad-tx-sapling-version-too-high");
+        if (!futureActive) {
+            // Reject transactions with invalid version group id
+            if (tx.nVersionGroupId != SAPLING_VERSION_GROUP_ID) {
+                return state.DoS(
+                    dosLevelPotentiallyRelaxing,
+                    error("ContextualCheckTransaction(): invalid Sapling tx version"),
+                    REJECT_INVALID, "bad-sapling-tx-version-group-id");
+            }
         }
     } else {
         // Rules that apply generally before Sapling. These were
@@ -922,8 +930,8 @@ bool ContextualCheckTransaction(
     // consensus check. If Canopy is not yet active, fundingStreamElements will be empty.
     std::set<Consensus::FundingStreamElement> fundingStreamElements = Consensus::GetActiveFundingStreamElements(
         nHeight,
-        GetBlockSubsidy(nHeight, chainparams.GetConsensus()),
-        chainparams.GetConsensus());
+        GetBlockSubsidy(nHeight, consensus),
+        consensus);
 
     // Rules that apply to Heartwood and later:
     if (heartwoodActive) {
@@ -944,7 +952,7 @@ bool ContextualCheckTransaction(
 
                 // SaplingNotePlaintext::decrypt() checks note commitment validity.
                 auto encPlaintext = SaplingNotePlaintext::decrypt(
-                    chainparams.GetConsensus(),
+                    consensus,
                     nHeight,
                     output.encCiphertext,
                     output.ephemeralKey,
@@ -1032,8 +1040,40 @@ bool ContextualCheckTransaction(
         // after Canopy activation.
     }
 
-    auto consensusBranchId = CurrentEpochBranchId(nHeight, chainparams.GetConsensus());
-    auto prevConsensusBranchId = PrevEpochBranchId(consensusBranchId, chainparams.GetConsensus());
+    // Rules that apply to the future epoch
+    if (futureActive) {
+        switch (tx.nVersionGroupId) {
+            case ZFUTURE_VERSION_GROUP_ID:
+                if (tx.nVersion <= SAPLING_MAX_TX_VERSION) {
+                    return state.DoS(
+                        dosLevelConstricting,
+                        error("ContextualCheckTransaction(): Future version too low"),
+                        REJECT_INVALID, "bad-tx-zfuture-version-too-low");
+                }
+
+                // Reject transactions with invalid version
+                if (tx.nVersion > SAPLING_MAX_TX_VERSION + 1) {
+                    return state.DoS(
+                        dosLevelPotentiallyRelaxing,
+                        error("ContextualCheckTransaction(): Future version too high"),
+                        REJECT_INVALID, "bad-tx-zfuture-version-too-high");
+                }
+                break;
+            case SAPLING_VERSION_GROUP_ID:
+                // Allow V4 transactions while futureActive
+                break;
+            default:
+                return state.DoS(
+                    dosLevelPotentiallyRelaxing,
+                    error("ContextualCheckTransaction(): invalid future tx version group id"),
+                    REJECT_INVALID, "bad-zfuture-tx-version-group-id");
+        }
+    } else {
+        // Rules that apply generally before the next release epoch
+    }
+
+    auto consensusBranchId = CurrentEpochBranchId(nHeight, consensus);
+    auto prevConsensusBranchId = PrevEpochBranchId(consensusBranchId, consensus);
     uint256 dataToBeSigned;
     uint256 prevDataToBeSigned;
 
@@ -1167,10 +1207,17 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state,
     }
 }
 
+/**
+ * Basic checks that don't depend on any context.
+ *
+ * This function must obey the following contract: it must reject transactions
+ * that are invalid according to the transaction's embedded version
+ * information, but it may accept transactions that are valid with respect to
+ * embedded version information but are invalid with respect to current
+ * consensus rules.
+ */
 bool CheckTransactionWithoutProofVerification(const CTransaction& tx, CValidationState &state)
 {
-    // Basic checks that don't depend on any context
-
     /**
      * Previously:
      * 1. The consensus rule below was:
@@ -1203,7 +1250,8 @@ bool CheckTransactionWithoutProofVerification(const CTransaction& tx, CValidatio
                 REJECT_INVALID, "bad-tx-overwinter-version-too-low");
         }
         if (tx.nVersionGroupId != OVERWINTER_VERSION_GROUP_ID &&
-                tx.nVersionGroupId != SAPLING_VERSION_GROUP_ID) {
+                tx.nVersionGroupId != SAPLING_VERSION_GROUP_ID &&
+                tx.nVersionGroupId != ZFUTURE_VERSION_GROUP_ID) {
             return state.DoS(100, error("CheckTransaction(): unknown tx version group id"),
                     REJECT_INVALID, "bad-tx-version-group-id");
         }
@@ -1435,8 +1483,10 @@ bool AcceptToMemoryPool(
         bool* pfMissingInputs, bool fRejectAbsurdFee)
 {
     AssertLockHeld(cs_main);
-    if (pfMissingInputs)
+    LOCK(pool.cs); // mempool "read lock" (held through pool.addUnchecked())
+    if (pfMissingInputs) {
         *pfMissingInputs = false;
+    }
 
     int nextBlockHeight = chainActive.Height() + 1;
 
@@ -1488,8 +1538,6 @@ bool AcceptToMemoryPool(
         return false;
 
     // Check for conflicts with in-memory transactions
-    {
-    LOCK(pool.cs); // protect pool.mapNextTx
     for (unsigned int i = 0; i < tx.vin.size(); i++)
     {
         COutPoint outpoint = tx.vin[i].prevout;
@@ -1511,15 +1559,12 @@ bool AcceptToMemoryPool(
             return false;
         }
     }
-    }
 
     {
         CCoinsView dummy;
         CCoinsViewCache view(&dummy);
 
         CAmount nValueIn = 0;
-        {
-        LOCK(pool.cs);
         CCoinsViewMemPool viewMemPool(pcoinsTip, pool);
         view.SetBackend(viewMemPool);
 
@@ -1561,9 +1606,7 @@ bool AcceptToMemoryPool(
 
         nValueIn = view.GetValueIn(tx);
 
-        // we have all inputs cached now, so switch back to dummy, so we don't need to keep lock on mempool
         view.SetBackend(dummy);
-        }
 
         // Check for non-standard pay-to-script-hash in inputs
         if (chainparams.RequireStandard() && !AreInputsStandard(tx, view, consensusBranchId))
@@ -1675,9 +1718,6 @@ bool AcceptToMemoryPool(
         }
 
         {
-            // We lock to prevent other threads from accessing the mempool between adding and evicting
-            LOCK(pool.cs);
-
             // Store transaction in memory
             pool.addUnchecked(hash, entry, !IsInitialBlockDownload(chainparams.GetConsensus()));
 
@@ -1692,6 +1732,10 @@ bool AcceptToMemoryPool(
             }
 
             pool.EnsureSizeLimit();
+
+            MetricsGauge("zcash.mempool.size.transactions", mempool.size());
+            MetricsGauge("zcash.mempool.size.bytes", mempool.GetTotalTxSize());
+            MetricsGauge("zcash.mempool.usage.bytes", mempool.DynamicMemoryUsage());
         }
     }
 
@@ -2646,84 +2690,6 @@ void ThreadScriptCheck() {
     scriptcheckqueue.Thread();
 }
 
-//
-// Called periodically asynchronously; alerts if it smells like
-// we're being fed a bad chain (blocks being generated much
-// too slowly or too quickly).
-void PartitionCheck(
-        bool (*initialDownloadCheck)(const Consensus::Params&),
-        const Consensus::Params& consensusParams,
-        CCriticalSection& cs,
-        const CBlockIndex *const &bestHeader)
-{
-    if (bestHeader == NULL || initialDownloadCheck(consensusParams)) return;
-
-    static int64_t lastAlertTime = 0;
-    int64_t now = GetTime();
-    if (lastAlertTime > now-60*60*24) return; // Alert at most once per day
-
-    const int SPAN_HOURS=4;
-    const int SPAN_SECONDS=SPAN_HOURS*60*60;
-
-    LOCK(cs);
-
-    int BLOCKS_EXPECTED;
-    // TODO: This can be simplified when the Blossom activation height is set
-    int nBlossomBlocks = consensusParams.vUpgrades[Consensus::UPGRADE_BLOSSOM].nActivationHeight == Consensus::NetworkUpgrade::NO_ACTIVATION_HEIGHT ?
-        0 : std::max(0, bestHeader->nHeight - consensusParams.vUpgrades[Consensus::UPGRADE_BLOSSOM].nActivationHeight);
-    int blossomBlockTime = nBlossomBlocks * consensusParams.nPostBlossomPowTargetSpacing;
-    // If the span period includes Blossom activation, adjust the number of expected blocks.
-    if (blossomBlockTime < SPAN_SECONDS) {
-        // If there are 0 blossomBlocks the following is equivalent to
-        // BLOCKS_EXPECTED = SPAN_SECONDS / consensusParams.nPreBlossomPowTargetSpacing
-        BLOCKS_EXPECTED = nBlossomBlocks + (SPAN_SECONDS - blossomBlockTime) / consensusParams.nPreBlossomPowTargetSpacing;
-    } else {
-        BLOCKS_EXPECTED = SPAN_SECONDS / consensusParams.nPostBlossomPowTargetSpacing;
-    }
-
-    boost::math::poisson_distribution<double> poisson(BLOCKS_EXPECTED);
-
-    std::string strWarning;
-    int64_t startTime = GetTime() - SPAN_SECONDS;
-
-    const CBlockIndex* i = bestHeader;
-    int nBlocks = 0;
-    while (i->GetBlockTime() >= startTime) {
-        ++nBlocks;
-        i = i->pprev;
-        if (i == NULL) return; // Ran out of chain, we must not be fully synced
-    }
-
-    // How likely is it to find that many by chance?
-    double p = boost::math::pdf(poisson, nBlocks);
-
-    LogPrint("partitioncheck", "%s : Found %d blocks in the last %d hours\n", __func__, nBlocks, SPAN_HOURS);
-    LogPrint("partitioncheck", "%s : likelihood: %g\n", __func__, p);
-
-    // Aim for one false-positive about every fifty years of normal running:
-    const int FIFTY_YEARS = 50*365*24*60*60;
-    double alertThreshold = 1.0 / (FIFTY_YEARS / SPAN_SECONDS);
-
-    if (p <= alertThreshold && nBlocks < BLOCKS_EXPECTED)
-    {
-        // Many fewer blocks than expected: alert!
-        strWarning = strprintf(_("WARNING: Check your network connection, %d blocks received in the last %d hours (%d expected)"),
-                               nBlocks, SPAN_HOURS, BLOCKS_EXPECTED);
-    }
-    else if (p <= alertThreshold && nBlocks > BLOCKS_EXPECTED)
-    {
-        // Many more blocks than expected: alert!
-        strWarning = strprintf(_("WARNING: Abnormally high number of blocks generated, %d blocks received in the last %d hours (%d expected)"),
-                               nBlocks, SPAN_HOURS, BLOCKS_EXPECTED);
-    }
-    if (!strWarning.empty())
-    {
-        SetMiscWarning(strWarning, GetTime());
-        CAlert::Notify(strWarning, true);
-        lastAlertTime = now;
-    }
-}
-
 static int64_t nTimeVerify = 0;
 static int64_t nTimeConnect = 0;
 static int64_t nTimeIndex = 0;
@@ -3091,14 +3057,14 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     if (pindex->GetUndoPos().IsNull() || !pindex->IsValid(BLOCK_VALID_SCRIPTS))
     {
         if (pindex->GetUndoPos().IsNull()) {
-            CDiskBlockPos pos;
-            if (!FindUndoPos(state, pindex->nFile, pos, ::GetSerializeSize(blockundo, SER_DISK, CLIENT_VERSION) + 40))
+            CDiskBlockPos _pos;
+            if (!FindUndoPos(state, pindex->nFile, _pos, ::GetSerializeSize(blockundo, SER_DISK, CLIENT_VERSION) + 40))
                 return error("ConnectBlock(): FindUndoPos failed");
-            if (!UndoWriteToDisk(blockundo, pos, pindex->pprev->GetBlockHash(), chainparams.MessageStart()))
+            if (!UndoWriteToDisk(blockundo, _pos, pindex->pprev->GetBlockHash(), chainparams.MessageStart()))
                 return AbortNode(state, "Failed to write undo data");
 
             // update nUndoPos in block index
-            pindex->nUndoPos = pos.nPos;
+            pindex->nUndoPos = _pos.nPos;
             pindex->nStatus |= BLOCK_HAVE_UNDO;
         }
 
@@ -3289,6 +3255,85 @@ void PruneAndFlush() {
     FlushStateToDisk(Params(), state, FLUSH_STATE_NONE);
 }
 
+struct PoolMetrics {
+    std::optional<size_t> created;
+    std::optional<size_t> spent;
+    std::optional<size_t> unspent;
+    std::optional<CAmount> value;
+
+    static PoolMetrics Sprout(CBlockIndex *pindex, CCoinsViewCache *view) {
+        PoolMetrics stats;
+        stats.value = pindex->nChainSproutValue;
+
+        // RewindBlockIndex calls DisconnectTip in a way that can potentially cause a
+        // Sprout tree to not exist (the rewind_index RPC test reliably triggers this).
+        // We only need to access the tree during disconnection for metrics purposes, and
+        // we will never encounter this rewind situation on either mainnet or testnet, so
+        // if we can't access the Sprout tree we default to zero.
+        SproutMerkleTree sproutTree;
+        if (view->GetSproutAnchorAt(pindex->hashFinalSproutRoot, sproutTree)) {
+            stats.created = sproutTree.size();
+        } else {
+            stats.created = 0;
+        }
+
+        return stats;
+    }
+
+    static PoolMetrics Sapling(CBlockIndex *pindex, CCoinsViewCache *view) {
+        PoolMetrics stats;
+        stats.value = pindex->nChainSaplingValue;
+
+        // Before Sapling activation, the Sapling commitment set is empty.
+        SaplingMerkleTree saplingTree;
+        if (view->GetSaplingAnchorAt(pindex->hashFinalSaplingRoot, saplingTree)) {
+            stats.created = saplingTree.size();
+        } else {
+            stats.created = 0;
+        }
+
+        return stats;
+    }
+
+    static PoolMetrics Transparent(CBlockIndex *pindex, CCoinsViewCache *view) {
+        PoolMetrics stats;
+        // TODO: Collect transparent pool value.
+
+        // TODO: Figure out a way to efficiently collect UTXO set metrics
+        // (view->GetStats() is too slow to call during block verification).
+
+        return stats;
+    }
+};
+
+#define RenderPoolMetrics(poolName, poolMetrics) \
+    do {                                         \
+        if (poolMetrics.created) {               \
+            MetricsStaticGauge(                  \
+                "zcash.pool.notes.created",      \
+                poolMetrics.created.value(),     \
+                "name", poolName);               \
+        }                                        \
+        if (poolMetrics.spent) {                 \
+            MetricsStaticGauge(                  \
+                "zcash.pool.notes.spent",        \
+                poolMetrics.spent.value(),       \
+                "name", poolName);               \
+        }                                        \
+        if (poolMetrics.unspent) {               \
+            MetricsStaticGauge(                  \
+                "zcash.pool.notes.unspent",      \
+                poolMetrics.unspent.value(),     \
+                "name", poolName);               \
+        }                                        \
+        if (poolMetrics.value) {                 \
+            MetricsStaticGauge(                  \
+                "zcash.pool.value.zatoshis",     \
+                poolMetrics.value.value(),       \
+                "name", poolName);               \
+        }                                        \
+    } while (0)
+
 /** Update chainActive and related internal data structures. */
 void static UpdateTip(CBlockIndex *pindexNew, const CChainParams& chainParams) {
     chainActive.SetTip(pindexNew);
@@ -3315,6 +3360,15 @@ void static UpdateTip(CBlockIndex *pindexNew, const CChainParams& chainParams) {
         "date", date.c_str(),
         "progress", progress.c_str(),
         "cache", cache.c_str());
+
+    auto sproutPool = PoolMetrics::Sprout(pindexNew, pcoinsTip);
+    auto saplingPool = PoolMetrics::Sapling(pindexNew, pcoinsTip);
+    auto transparentPool = PoolMetrics::Transparent(pindexNew, pcoinsTip);
+
+    MetricsGauge("zcash.chain.verified.block.height", pindexNew->nHeight);
+    RenderPoolMetrics("sprout", sproutPool);
+    RenderPoolMetrics("sapling", saplingPool);
+    RenderPoolMetrics("transparent", transparentPool);
 
     cvBlockChange.notify_all();
 }
@@ -3447,6 +3501,8 @@ bool static ConnectTip(CValidationState& state, const CChainParams& chainparams,
     int64_t nTime6 = GetTimeMicros(); nTimePostConnect += nTime6 - nTime5; nTimeTotal += nTime6 - nTime1;
     LogPrint("bench", "  - Connect postprocess: %.2fms [%.2fs]\n", (nTime6 - nTime5) * 0.001, nTimePostConnect * 0.000001);
     LogPrint("bench", "- Connect block: %.2fms [%.2fs]\n", (nTime6 - nTime1) * 0.001, nTimeTotal * 0.000001);
+    MetricsIncrementCounter("zcash.chain.verified.block.total");
+    MetricsHistogram("zcash.chain.verified.block.seconds", (nTime6 - nTime1) * 0.000001);
     return true;
 }
 
@@ -3666,12 +3722,13 @@ static bool ActivateBestChainStep(CValidationState& state, const CChainParams& c
  */
 bool ActivateBestChain(CValidationState& state, const CChainParams& chainparams, const CBlock* pblock)
 {
-    CBlockIndex *pindexNewTip = NULL;
     CBlockIndex *pindexMostWork = NULL;
+    CBlockIndex *pindexNewTip = NULL;
     do {
         boost::this_thread::interruption_point();
 
         bool fInitialDownload;
+        int nNewHeight;
         {
             LOCK(cs_main);
             pindexMostWork = FindMostWorkChain();
@@ -3685,6 +3742,7 @@ bool ActivateBestChain(CValidationState& state, const CChainParams& chainparams,
 
             pindexNewTip = chainActive.Tip();
             fInitialDownload = IsInitialBlockDownload(chainparams.GetConsensus());
+            nNewHeight = chainActive.Height();
         }
         // When we reach this point, we switched to a new tip (stored in pindexNewTip).
 
@@ -3700,13 +3758,13 @@ bool ActivateBestChain(CValidationState& state, const CChainParams& chainparams,
             {
                 LOCK(cs_vNodes);
                 for (CNode* pnode : vNodes)
-                    if (chainActive.Height() > (pnode->nStartingHeight != -1 ? pnode->nStartingHeight - 2000 : nBlockEstimate))
+                    if (nNewHeight > (pnode->nStartingHeight != -1 ? pnode->nStartingHeight - 2000 : nBlockEstimate))
                         pnode->PushInventory(CInv(MSG_BLOCK, hashNewTip));
             }
             // Notify external listeners about the new tip.
             GetMainSignals().UpdatedBlockTip(pindexNewTip);
         }
-    } while(pindexMostWork != chainActive.Tip());
+    } while (pindexNewTip != pindexMostWork);
     CheckBlockIndex(chainparams.GetConsensus());
 
     // Write changes periodically to disk, after relay.
@@ -5547,6 +5605,22 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
                         }
                     }
                 }
+                // disconnect node in case we have reached the outbound limit for serving historical blocks
+                // never disconnect whitelisted nodes
+                static const int nOneWeek = 7 * 24 * 60 * 60; // assume > 1 week = historical
+                if (send && CNode::OutboundTargetReached(consensusParams.PoWTargetSpacing(currentHeight), true) && (
+                        (
+                            (pindexBestHeader != NULL) &&
+                            (pindexBestHeader->GetBlockTime() - mi->second->GetBlockTime() > nOneWeek)
+                        ) || inv.type == MSG_FILTERED_BLOCK
+                    ) && !pfrom->fWhitelisted)
+                {
+                    LogPrint("net", "historical block serving limit reached, disconnect peer=%d\n", pfrom->GetId());
+
+                    //disconnect node
+                    pfrom->fDisconnect = true;
+                    send = false;
+                }
                 // Pruned nodes may have deleted the block, so check whether
                 // it's available before trying to send.
                 if (send && (mi->second->nStatus & BLOCK_HAVE_DATA))
@@ -5559,10 +5633,16 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
                         pfrom->PushMessage("block", block);
                     else // MSG_FILTERED_BLOCK)
                     {
-                        LOCK(pfrom->cs_filter);
-                        if (pfrom->pfilter)
+                        bool send = false;
+                        CMerkleBlock merkleBlock;
                         {
-                            CMerkleBlock merkleBlock(block, *pfrom->pfilter);
+                            LOCK(pfrom->cs_filter);
+                            if (pfrom->pfilter) {
+                                send = true;
+                                merkleBlock = CMerkleBlock(block, *pfrom->pfilter);
+                            }
+                        }
+                        if (send) {
                             pfrom->PushMessage("merkleblock", merkleBlock);
                             // CMerkleBlock just contains hashes, so also push any transactions in the block the client did not see
                             // This avoids hurting performance by pointlessly requiring a round-trip
@@ -5572,8 +5652,7 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
                             // however we MUST always provide at least what the remote peer needs
                             typedef std::pair<unsigned int, uint256> PairType;
                             for (PairType& pair : merkleBlock.vMatchedTxn)
-                                if (!pfrom->setInventoryKnown.count(CInv(MSG_TX, pair.second)))
-                                    pfrom->PushMessage("tx", block.vtx[pair.first]);
+                                pfrom->PushMessage("tx", block.vtx[pair.first]);
                         }
                         // else
                             // no response
@@ -5669,6 +5748,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
         if (pfrom->nVersion != 0)
         {
             pfrom->PushMessage("reject", strCommand, REJECT_DUPLICATE, string("Duplicate version message"));
+            LOCK(cs_main);
             Misbehaving(pfrom->GetId(), 1);
             return false;
         }
@@ -5677,7 +5757,11 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
         CAddress addrMe;
         CAddress addrFrom;
         uint64_t nNonce = 1;
-        vRecv >> pfrom->nVersion >> pfrom->nServices >> nTime >> addrMe;
+        std::string strSubVer;
+        std::string cleanSubVer;
+        uint64_t nServices;
+        vRecv >> pfrom->nVersion >> nServices >> nTime >> addrMe;
+        pfrom->nServices = nServices;
         if (pfrom->nVersion < MIN_PEER_PROTO_VERSION)
         {
             // disconnect from peers older than this proto version
@@ -5710,11 +5794,14 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
         if (!vRecv.empty())
             vRecv >> addrFrom >> nNonce;
         if (!vRecv.empty()) {
-            vRecv >> LIMITED_STRING(pfrom->strSubVer, MAX_SUBVERSION_LENGTH);
-            pfrom->cleanSubVer = SanitizeString(pfrom->strSubVer, SAFE_CHARS_SUBVERSION);
+            vRecv >> LIMITED_STRING(strSubVer, MAX_SUBVERSION_LENGTH);
+            cleanSubVer = SanitizeString(strSubVer, SAFE_CHARS_SUBVERSION);
         }
-        if (!vRecv.empty())
-            vRecv >> pfrom->nStartingHeight;
+        if (!vRecv.empty()) {
+            int nStartingHeight;
+            vRecv >> nStartingHeight;
+            pfrom->nStartingHeight = nStartingHeight;
+        }
         if (!vRecv.empty())
             vRecv >> pfrom->fRelayTxes; // set to true after we get the first filter* message
         else
@@ -5728,7 +5815,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
             return true;
         }
 
-        pfrom->addrLocal = addrMe;
+        pfrom->SetAddrLocal(addrMe);
         if (pfrom->fInbound && addrMe.IsRoutable())
         {
             SeenLocal(addrMe);
@@ -5738,10 +5825,18 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
         if (pfrom->fInbound)
             pfrom->PushVersion();
 
+        {
+            LOCK(pfrom->cs_SubVer);
+            pfrom->strSubVer = strSubVer;
+            pfrom->cleanSubVer = cleanSubVer;
+        }
         pfrom->fClient = !(pfrom->nServices & NODE_NETWORK);
 
         // Potentially mark this peer as a preferred download peer.
-        UpdatePreferredDownload(pfrom, State(pfrom->GetId()));
+        {
+            LOCK(cs_main);
+            UpdatePreferredDownload(pfrom, State(pfrom->GetId()));
+        }
 
         // Change version
         pfrom->PushMessage("verack");
@@ -5759,7 +5854,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
                     LogPrintf("ProcessMessages: advertizing address %s\n", addr.ToString());
                     pfrom->PushAddress(addr, insecure_rand);
                 } else if (IsPeerAddrLocalGood(pfrom)) {
-                    addr.SetIP(pfrom->addrLocal);
+                    addr.SetIP(addrMe);
                     LogPrintf("ProcessMessages: advertizing address %s\n", addr.ToString());
                     pfrom->PushAddress(addr, insecure_rand);
                 }
@@ -5794,7 +5889,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
             remoteAddr = ", peeraddr=" + pfrom->addr.ToString();
 
         LogPrintf("receive version message: %s: version %d, blocks=%d, us=%s, peer=%d%s\n",
-                  pfrom->cleanSubVer, pfrom->nVersion,
+                  cleanSubVer, pfrom->nVersion,
                   pfrom->nStartingHeight, addrMe.ToString(), pfrom->id,
                   remoteAddr);
 
@@ -5805,6 +5900,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
     else if (pfrom->nVersion == 0)
     {
         // Must have a version message before anything else
+        LOCK(cs_main);
         Misbehaving(pfrom->GetId(), 1);
         return false;
     }
@@ -5852,6 +5948,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
             return true;
         if (vAddr.size() > 1000)
         {
+            LOCK(cs_main);
             Misbehaving(pfrom->GetId(), 20);
             return error("message addr size() = %u", vAddr.size());
         }
@@ -5875,26 +5972,21 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
                     LOCK(cs_vNodes);
                     // Use deterministic randomness to send to the same nodes for 24 hours
                     // at a time so the addrKnowns of the chosen nodes prevent repeats
-                    static uint256 hashSalt;
-                    if (hashSalt.IsNull())
-                        hashSalt = GetRandHash();
+                    static const uint64_t salt0 = GetRand(std::numeric_limits<uint64_t>::max());
+                    static const uint64_t salt1 = GetRand(std::numeric_limits<uint64_t>::max());
                     uint64_t hashAddr = addr.GetHash();
-                    uint256 hashRand = ArithToUint256(UintToArith256(hashSalt) ^ (hashAddr<<32) ^ ((GetTime()+hashAddr)/(24*60*60)));
-                    hashRand = Hash(BEGIN(hashRand), END(hashRand));
-                    multimap<uint256, CNode*> mapMix;
+                    multimap<uint64_t, CNode*> mapMix;
                     FastRandomContext insecure_rand;
+                    const CSipHasher hasher = CSipHasher(salt0, salt1).Write(hashAddr << 32).Write((GetTime() + hashAddr) / (24*60*60));
                     for (CNode* pnode : vNodes)
                     {
                         if (pnode->nVersion < CADDR_TIME_VERSION)
                             continue;
-                        unsigned int nPointer;
-                        memcpy(&nPointer, &pnode, sizeof(nPointer));
-                        uint256 hashKey = ArithToUint256(UintToArith256(hashRand) ^ nPointer);
-                        hashKey = Hash(BEGIN(hashKey), END(hashKey));
+                        uint64_t hashKey = CSipHasher(hasher).Write(pnode->id).Finalize();
                         mapMix.insert(make_pair(hashKey, pnode));
                     }
                     int nRelayNodes = fReachable ? 2 : 1; // limited relaying of addresses outside our network(s)
-                    for (multimap<uint256, CNode*>::iterator mi = mapMix.begin(); mi != mapMix.end() && nRelayNodes-- > 0; ++mi)
+                    for (multimap<uint64_t, CNode*>::iterator mi = mapMix.begin(); mi != mapMix.end() && nRelayNodes-- > 0; ++mi)
                         ((*mi).second)->PushAddress(addr, insecure_rand);
                 }
             }
@@ -5916,9 +6008,16 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
         vRecv >> vInv;
         if (vInv.size() > MAX_INV_SZ)
         {
+            LOCK(cs_main);
             Misbehaving(pfrom->GetId(), 20);
             return error("message inv size() = %u", vInv.size());
         }
+
+        bool fBlocksOnly = GetBoolArg("-blocksonly", DEFAULT_BLOCKSONLY);
+
+        // Allow whitelisted peers to send data other than blocks in blocks only mode if whitelistrelay is true
+        if (pfrom->fWhitelisted && GetBoolArg("-whitelistrelay", DEFAULT_WHITELISTRELAY))
+            fBlocksOnly = false;
 
         LOCK(cs_main);
 
@@ -5957,8 +6056,12 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
                     }
                     LogPrint("net", "getheaders (%d) %s to peer=%d\n", pindexBestHeader->nHeight, inv.hash.ToString(), pfrom->id);
                 }
-            } else {
-                if (!fAlreadyHave && !IsInitialBlockDownload(chainparams.GetConsensus()))
+            }
+            else
+            {
+                if (fBlocksOnly)
+                    LogPrint("net", "transaction (%s) inv sent in violation of protocol peer=%d\n", inv.hash.ToString(), pfrom->id);
+                else if (!fAlreadyHave && !IsInitialBlockDownload(chainparams.GetConsensus()))
                     pfrom->AskFor(inv);
             }
 
@@ -5982,6 +6085,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
         vRecv >> vInv;
         if (vInv.size() > MAX_INV_SZ)
         {
+            LOCK(cs_main);
             Misbehaving(pfrom->GetId(), 20);
             return error("message getdata size() = %u", vInv.size());
         }
@@ -6048,10 +6152,10 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
         vRecv >> locator >> hashStop;
 
         LOCK(cs_main);
-
-        if (IsInitialBlockDownload(chainparams.GetConsensus()))
+        if (IsInitialBlockDownload(chainparams.GetConsensus()) && !pfrom->fWhitelisted) {
+            LogPrint("net", "Ignoring getheaders from peer=%d because node is in initial block download\n", pfrom->id);
             return true;
-
+        }
         CBlockIndex* pindex = NULL;
         if (locator.IsNull())
         {
@@ -6085,6 +6189,14 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
 
     else if (strCommand == "tx" && !IsInitialBlockDownload(chainparams.GetConsensus()))
     {
+        // Stop processing the transaction early if
+        // We are in blocks only mode and peer is either not whitelisted or whitelistrelay is off
+        if (GetBoolArg("-blocksonly", DEFAULT_BLOCKSONLY) && (!pfrom->fWhitelisted || !GetBoolArg("-whitelistrelay", DEFAULT_WHITELISTRELAY)))
+        {
+            LogPrint("net", "transaction sent in violation of protocol peer=%d\n", pfrom->id);
+            return true;
+        }
+
         vector<uint256> vWorkQueue;
         vector<uint256> vEraseQueue;
         CTransaction tx;
@@ -6183,7 +6295,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
             assert(recentRejects);
             recentRejects->insert(tx.GetHash());
 
-            if (pfrom->fWhitelisted) {
+            if (pfrom->fWhitelisted && GetBoolArg("-whitelistforcerelay", DEFAULT_WHITELISTFORCERELAY)) {
                 // Always relay transactions received from whitelisted peers, even
                 // if they were already in the mempool or rejected from it due
                 // to policy, allowing the node to function as a gateway for
@@ -6223,6 +6335,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
         // Bypass the normal CBlock deserialization, as we don't want to risk deserializing 2000 full blocks.
         unsigned int nCount = ReadCompactSize(vRecv);
         if (nCount > MAX_HEADERS_RESULTS) {
+            LOCK(cs_main);
             Misbehaving(pfrom->GetId(), 20);
             return error("headers message size = %u", nCount);
         }
@@ -6343,6 +6456,12 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
     else if (strCommand == "mempool")
     {
         int currentHeight = GetHeight();
+        if (CNode::OutboundTargetReached(chainparams.GetConsensus().PoWTargetSpacing(currentHeight), false) && !pfrom->fWhitelisted)
+        {
+            LogPrint("net", "mempool request with bandwidth limit reached, disconnect peer=%d\n", pfrom->GetId());
+            pfrom->fDisconnect = true;
+            return true;
+        }
 
         LOCK2(cs_main, pfrom->cs_filter);
 
@@ -6414,7 +6533,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
                     if (pingUsecTime > 0) {
                         // Successful ping time measurement, replace previous
                         pfrom->nPingUsecTime = pingUsecTime;
-                        pfrom->nMinPingUsecTime = std::min(pfrom->nMinPingUsecTime, pingUsecTime);
+                        pfrom->nMinPingUsecTime = std::min(pfrom->nMinPingUsecTime.load(), pingUsecTime);
                     } else {
                         // This should never happen
                         sProblem = "Timing mishap";
@@ -6477,6 +6596,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
                 // This isn't a Misbehaving(100) (immediate ban) because the
                 // peer might be an older or different implementation with
                 // a different signature key, etc.
+                LOCK(cs_main);
                 Misbehaving(pfrom->GetId(), 10);
             }
         }
@@ -6488,6 +6608,7 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
                strCommand == "filteradd"))
     {
         if (pfrom->nVersion >= NO_BLOOM_VERSION) {
+            LOCK(cs_main);
             Misbehaving(pfrom->GetId(), 100);
             return false;
         } else if (GetBoolArg("-enforcenodebloom", DEFAULT_ENFORCENODEBLOOM)) {
@@ -6503,16 +6624,18 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
         vRecv >> filter;
 
         if (!filter.IsWithinSizeConstraints())
+        {
             // There is no excuse for sending a too-large filter
+            LOCK(cs_main);
             Misbehaving(pfrom->GetId(), 100);
+        }
         else
         {
             LOCK(pfrom->cs_filter);
             delete pfrom->pfilter;
             pfrom->pfilter = new CBloomFilter(filter);
-            pfrom->pfilter->UpdateEmptyFull();
+            pfrom->fRelayTxes = true;
         }
-        pfrom->fRelayTxes = true;
     }
 
 
@@ -6523,15 +6646,20 @@ bool static ProcessMessage(const CChainParams& chainparams, CNode* pfrom, string
 
         // Nodes must NEVER send a data item > 520 bytes (the max size for a script data object,
         // and thus, the maximum size any matched object can have) in a filteradd message
-        if (vData.size() > MAX_SCRIPT_ELEMENT_SIZE)
-        {
-            Misbehaving(pfrom->GetId(), 100);
+        bool bad = false;
+        if (vData.size() > MAX_SCRIPT_ELEMENT_SIZE) {
+            bad = true;
         } else {
             LOCK(pfrom->cs_filter);
-            if (pfrom->pfilter)
+            if (pfrom->pfilter) {
                 pfrom->pfilter->insert(vData);
-            else
-                Misbehaving(pfrom->GetId(), 100);
+            } else {
+                bad = true;
+            }
+        }
+        if (bad) {
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 100);
         }
     }
 
@@ -6801,7 +6929,7 @@ bool SendMessages(const Consensus::Params& params, CNode* pto, bool fSendTrickle
                     LogPrintf("Warning: not banning local peer %s!\n", pto->addr.ToString());
                 else
                 {
-                    CNode::Ban(pto->addr);
+                    CNode::Ban(pto->addr, BanReasonNodeMisbehaving);
                 }
             }
             state.fShouldBan = false;
@@ -6820,7 +6948,16 @@ bool SendMessages(const Consensus::Params& params, CNode* pto, bool fSendTrickle
             if ((nSyncStarted == 0 && fFetch) || pindexBestHeader->GetBlockTime() > GetTime() - 24 * 60 * 60) {
                 state.fSyncStarted = true;
                 nSyncStarted++;
-                CBlockIndex *pindexStart = pindexBestHeader->pprev ? pindexBestHeader->pprev : pindexBestHeader;
+                const CBlockIndex *pindexStart = pindexBestHeader;
+                /* If possible, start at the block preceding the currently
+                   best known header.  This ensures that we always get a
+                   non-empty list of headers back as long as the peer
+                   is up-to-date.  With a non-empty response, we can initialise
+                   the peer's known best block.  This wouldn't be possible
+                   if we requested starting at pindexBestHeader and
+                   got back an empty response.  */
+                if (pindexStart->pprev)
+                    pindexStart = pindexStart->pprev;
                 LogPrint("net", "initial getheaders (%d) to peer=%d (startheight:%d)\n", pindexStart->nHeight, pto->id, pto->nStartingHeight);
                 pto->PushMessage("getheaders", chainActive.GetLocator(pindexStart), uint256());
             }
@@ -6845,7 +6982,7 @@ bool SendMessages(const Consensus::Params& params, CNode* pto, bool fSendTrickle
             vInvWait.reserve(pto->vInventoryToSend.size());
             for (const CInv& inv : pto->vInventoryToSend)
             {
-                if (pto->setInventoryKnown.count(inv))
+                if (inv.type == MSG_TX && pto->filterInventoryKnown.contains(inv.hash))
                     continue;
 
                 // trickle out tx inv to protect privacy
@@ -6866,15 +7003,13 @@ bool SendMessages(const Consensus::Params& params, CNode* pto, bool fSendTrickle
                     }
                 }
 
-                // returns true if wasn't already contained in the set
-                if (pto->setInventoryKnown.insert(inv).second)
+                pto->filterInventoryKnown.insert(inv.hash);
+
+                vInv.push_back(inv);
+                if (vInv.size() >= 1000)
                 {
-                    vInv.push_back(inv);
-                    if (vInv.size() >= 1000)
-                    {
-                        pto->PushMessage("inv", vInv);
-                        vInv.clear();
-                    }
+                    pto->PushMessage("inv", vInv);
+                    vInv.clear();
                 }
             }
             pto->vInventoryToSend = vInvWait;
@@ -6993,17 +7128,13 @@ public:
 CMutableTransaction CreateNewContextualCMutableTransaction(const Consensus::Params& consensusParams, int nHeight)
 {
     CMutableTransaction mtx;
-    bool isOverwintered = consensusParams.NetworkUpgradeActive(nHeight, Consensus::UPGRADE_OVERWINTER);
-    if (isOverwintered) {
-        mtx.fOverwintered = true;
-        if (consensusParams.NetworkUpgradeActive(nHeight, Consensus::UPGRADE_SAPLING)) {
-            mtx.nVersionGroupId = SAPLING_VERSION_GROUP_ID;
-            mtx.nVersion = SAPLING_TX_VERSION;
-        } else {
-            mtx.nVersionGroupId = OVERWINTER_VERSION_GROUP_ID;
-            mtx.nVersion = OVERWINTER_TX_VERSION;
-        }
 
+    auto txVersionInfo = CurrentTxVersionInfo(consensusParams, nHeight);
+    mtx.fOverwintered   = txVersionInfo.fOverwintered;
+    mtx.nVersionGroupId = txVersionInfo.nVersionGroupId;
+    mtx.nVersion        = txVersionInfo.nVersion;
+
+    if (mtx.fOverwintered) {
         bool blossomActive = consensusParams.NetworkUpgradeActive(nHeight, Consensus::UPGRADE_BLOSSOM);
         unsigned int defaultExpiryDelta = blossomActive ? DEFAULT_POST_BLOSSOM_TX_EXPIRY_DELTA : DEFAULT_PRE_BLOSSOM_TX_EXPIRY_DELTA;
         mtx.nExpiryHeight = nHeight + (expiryDeltaArg ? expiryDeltaArg.value() : defaultExpiryDelta);

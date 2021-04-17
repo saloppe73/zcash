@@ -60,6 +60,10 @@ struct CNodeStateStats;
 static const bool DEFAULT_ALERTS = true;
 /** Maximum reorg length we will accept before we shut down and alert the user. */
 static const unsigned int MAX_REORG_LENGTH = COINBASE_MATURITY - 1;
+/** Default for DEFAULT_WHITELISTRELAY. */
+static const bool DEFAULT_WHITELISTRELAY = true;
+/** Default for DEFAULT_WHITELISTFORCERELAY. */
+static const bool DEFAULT_WHITELISTFORCERELAY = true;
 /** Default for -minrelaytxfee, minimum relay fee for transactions */
 static const unsigned int DEFAULT_MIN_RELAY_TX_FEE = 100;
 //! -maxtxfee default
@@ -145,7 +149,7 @@ extern uint64_t nLastBlockSize;
 extern const std::string strMessageMagic;
 extern CWaitableCriticalSection csBestBlock;
 extern CConditionVariable cvBlockChange;
-extern bool fImporting;
+extern std::atomic_bool fImporting;
 extern std::atomic_bool fReindex;
 extern int nScriptCheckThreads;
 extern bool fTxIndex;
@@ -255,12 +259,6 @@ bool ProcessMessages(const CChainParams& chainparams, CNode* pfrom);
 bool SendMessages(const Consensus::Params& params, CNode* pto, bool fSendTrickle);
 /** Run an instance of the script checking thread */
 void ThreadScriptCheck();
-/** Try to detect Partition (network isolation) attacks against us */
-void PartitionCheck(
-        bool (*initialDownloadCheck)(const Consensus::Params&),
-        const Consensus::Params& params,
-        CCriticalSection& cs,
-        const CBlockIndex *const &bestHeader);
 /** Check whether we are doing an initial block download (synchronizing from disk or network) */
 bool IsInitialBlockDownload(const Consensus::Params& params);
 /** Format a string that describes several potential problems detected by the core */

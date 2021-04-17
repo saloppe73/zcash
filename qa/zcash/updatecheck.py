@@ -39,10 +39,6 @@ import sys
 import datetime
 
 SOURCE_ROOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..")
-# The email for this account is taylor@electriccoin.co and the token does not
-# have any privileges.
-GITHUB_API_BASIC_AUTH_USER = "taylor-ecc"
-GITHUB_API_BASIC_AUTH_PASSWORD = "df2cb6d13a29837e9dc97c7db1eff058e8fa6618"
 
 def get_dependency_list():
     dependencies = [
@@ -70,6 +66,11 @@ def get_dependency_list():
             GithubTagReleaseLister("jedisct1", "libsodium", "^(\d+)\.(\d+)\.(\d+)$",
                 { "1.0.17": (1, 0, 17) }),
             DependsVersionGetter("libsodium")),
+        # b2 matches the Boost version
+        Dependency("native_b2",
+            GithubTagReleaseLister("boostorg", "boost", "^boost-(\d+)\.(\d+)\.(\d+)$",
+                { "boost-1.69.0": (1, 69, 0), "boost-1.69.0-beta1": None }),
+            DependsVersionGetter("boost")),
         Dependency("native_ccache",
             GithubTagReleaseLister("ccache", "ccache", "^v?(\d+)\.(\d+)(?:\.(\d+))?$",
                 { "v3.5.1": (3, 5, 1), "v3.6": (3, 6)}),
@@ -91,8 +92,8 @@ def get_dependency_list():
                 { "v1.13": (1, 13) }),
             LevelDbVersionGetter()),
         Dependency("univalue",
-            GithubTagReleaseLister("jgarzik", "univalue", "^v(\d+)\.(\d+)\.(\d+)$",
-                { "v1.1.1": (1, 1, 1) }),
+            GithubTagReleaseLister("bitcoin-core", "univalue", "^v(\d+)\.(\d+)\.(\d+)$",
+                { "v1.0.1": (1, 0, 1) }),
             UnivalueVersionGetter()),
         Dependency("utfcpp",
             GithubTagReleaseLister("nemtrif", "utfcpp", "^v(\d+)\.(\d+)(?:\.(\d+))?$",
@@ -101,6 +102,25 @@ def get_dependency_list():
     ]
 
     return dependencies
+
+class GitHubToken:
+    def __init__(self):
+        token_path = os.path.join(SOURCE_ROOT, ".updatecheck-token")
+        try:
+            with open(token_path, encoding='utf8') as f:
+                token = f.read().strip()
+                self._user = token.split(":")[0]
+                self._password = token.split(":")[1]
+        except:
+            print("Please make sure a GitHub API token is in .updatecheck-token in the root of this repository.")
+            print("The format is username:hex-token.")
+            sys.exit(1)
+
+    def user(self):
+        return self.user
+
+    def password(self):
+        return self.password
 
 class Version(list):
     def __init__(self, version_tuple):
@@ -151,6 +171,7 @@ class GithubTagReleaseLister:
         self.repo = repo
         self.regex = regex
         self.testcases = testcases
+        self.token = GitHubToken()
 
         for tag, expected in testcases.items():
             match = re.match(self.regex, tag)
@@ -176,7 +197,7 @@ class GithubTagReleaseLister:
 
     def all_tag_names(self):
         url = "https://api.github.com/repos/" + safe(self.org) + "/" + safe(self.repo) + "/git/refs/tags"
-        r = requests.get(url, auth=requests.auth.HTTPBasicAuth(GITHUB_API_BASIC_AUTH_USER, GITHUB_API_BASIC_AUTH_PASSWORD))
+        r = requests.get(url, auth=requests.auth.HTTPBasicAuth(self.token.user(), self.token.password()))
         if r.status_code != 200:
             raise RuntimeError("Request to GitHub tag API failed.")
         json = r.json()
@@ -184,7 +205,7 @@ class GithubTagReleaseLister:
 
 class BerkeleyDbReleaseLister:
     def known_releases(self):
-        url = "https://www.oracle.com/technetwork/products/berkeleydb/downloads/index-082944.html"
+        url = "https://www.oracle.com/database/technologies/related/berkeleydb-downloads.html"
         r = requests.get(url)
         if r.status_code != 200:
             raise RuntimeError("Request to Berkeley DB download directory failed.")

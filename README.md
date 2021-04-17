@@ -1,4 +1,4 @@
-Zcash 4.2.0
+Zcash 4.4.0
 <img align="right" width="120" height="80" src="doc/imgs/logo.png">
 ===========
 
@@ -9,7 +9,7 @@ What is Zcash?
 Based on Bitcoin's code, Zcash intends to offer a far higher standard of privacy
 through a sophisticated zero-knowledge proving scheme that preserves
 confidentiality of transaction metadata. More technical details are available
-in our [Protocol Specification](https://github.com/zcash/zips/raw/master/protocol/protocol.pdf).
+in our [Protocol Specification](https://zips.z.cash/protocol/protocol.pdf).
 
 This software is the Zcash client. It downloads and stores the entire history
 of Zcash transactions; depending on the speed of your computer and network
